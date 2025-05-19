@@ -4,8 +4,8 @@
 #include <errno.h>
 #include <ctype.h>
 
-#define MAX_VAR_LENGTH 100
-#define MAX_NUM_LENGTH 20
+#define MAX_VAR_LENGTH 20
+#define MAX_NUM_LENGTH 100
 
 
 typedef enum {
