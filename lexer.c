@@ -196,7 +196,7 @@ void setup_transition_table(LexContext* ctx) {
     ctx->transition_table[STATE_START][CHAR_ALPHA] = STATE_IDENTIFIER;
     ctx->transition_table[STATE_START][CHAR_DIGIT] = STATE_INTEGER;
     ctx->transition_table[STATE_START][CHAR_OPERATOR] = STATE_OPERATOR;
-	ctx->transition_table[STATE_START][CHAR_DASH] = STATE_DASH;
+    ctx->transition_table[STATE_START][CHAR_DASH] = STATE_DASH;
     ctx->transition_table[STATE_START][CHAR_QUOTE] = STATE_STRING;
     ctx->transition_table[STATE_START][CHAR_STAR] = STATE_COMMENT;
     ctx->transition_table[STATE_START][CHAR_OPENB] = STATE_FINAL;
