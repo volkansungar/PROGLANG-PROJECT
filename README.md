@@ -5,10 +5,6 @@ Prototype kodu FSM kullanılmamış deneme/öğrenme amaçlı test kodudur.
 # ~/.bashrc
 Usage: lexer <input_filename> <br />
 `lexer() {
-  if [ -f "a.out" ]; then
-    echo "Removing previous executable 'a.out'..."
-    rm a.out
-  fi
   echo "Compiling..."
   gcc lexer.c -o lexer
   if [ $? -eq 0 ]; then
