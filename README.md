@@ -1,7 +1,7 @@
 # PROGLANG-PROJECT
 Bilgisayar Mühendisliği 2. sınıf Programming Languages dersi projesi \
 Prototype kodu FSM kullanılmamış deneme/öğrenme amaçlı test kodudur.
-<h1>lexer.c error handling düzenlenecek</h1>
+<h2>lexer.c error handling düzenlenecek</h2>
 
 # ~/.bashrc
 Usage: lexer <input_filename> <br />
