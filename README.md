@@ -3,7 +3,7 @@ Bilgisayar Mühendisliği 2. sınıf Programming Languages dersi projesi \
 Prototype kodu FSM kullanılmamış deneme/öğrenme amaçlı test kodudur.
 
 # ~/.bashrc
-Usage: lexer <input_filename>
+Usage: lexer <input_filename> \n
 `lexer() {
   if [ -f "a.out" ]; then
     echo "Removing previous executable 'a.out'..."
