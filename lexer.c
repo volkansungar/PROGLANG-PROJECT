@@ -188,6 +188,8 @@ void setup_transition_table(LexContext* ctx) {
         for (int j = 0; j < NUM_CHAR_CLASSES; j++) {
             if (j == CHAR_EOF) {
                 ctx->transition_table[i][j] = STATE_EOF;
+            } else if (j == CHAR_OTHER) {
+                ctx->transition_table[i][j] = STATE_ERROR;
             } else {ctx->transition_table[i][j] = STATE_RETURN;}
         }
     }
@@ -196,7 +198,7 @@ void setup_transition_table(LexContext* ctx) {
     ctx->transition_table[STATE_START][CHAR_ALPHA] = STATE_IDENTIFIER;
     ctx->transition_table[STATE_START][CHAR_DIGIT] = STATE_INTEGER;
     ctx->transition_table[STATE_START][CHAR_OPERATOR] = STATE_OPERATOR;
-    ctx->transition_table[STATE_START][CHAR_DASH] = STATE_DASH;
+	ctx->transition_table[STATE_START][CHAR_DASH] = STATE_DASH;
     ctx->transition_table[STATE_START][CHAR_QUOTE] = STATE_STRING;
     ctx->transition_table[STATE_START][CHAR_STAR] = STATE_COMMENT;
     ctx->transition_table[STATE_START][CHAR_OPENB] = STATE_FINAL;
@@ -231,10 +233,12 @@ void setup_transition_table(LexContext* ctx) {
     
     // COMMENT_LINE state geçişleri
     ctx->transition_table[STATE_COMMENT][CHAR_STAR] = STATE_START; ///////////////////////
+    ctx->transition_table[STATE_COMMENT][CHAR_EOF] = STATE_ERROR;
     for (int j = 0; j < NUM_CHAR_CLASSES; j++) {
-        if (j != CHAR_STAR) {
+        if (j != CHAR_STAR && j != CHAR_EOF) {
             ctx->transition_table[STATE_COMMENT][j] = STATE_COMMENT;
         }
+        
     }
     
     // STRING state geçişleri
@@ -379,7 +383,20 @@ Token get_next_token(LexContext* ctx) {
             if (state == STATE_RETURN) {
                 // return state karakteri geri yollar
                 unget_char(ctx);
-            }   
+            } else if (state == STATE_ERROR) {
+                if (prev_state == STATE_COMMENT) {
+                    report_error(ctx, "Comment left open");
+                    break;
+                } else if (prev_state == STATE_STRING) {
+                    report_error(ctx, "String left open");
+                    break;
+                } else if (char_class == CHAR_OTHER) 
+                {
+                    report_error(ctx, "Unknown Character");
+                    break;
+                }
+            }
+
         } else if (state == STATE_EOF) {
             break;
         } else {
