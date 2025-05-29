@@ -5,30 +5,19 @@
 #include <stdbool.h>
 #include <ctype.h>
 
-/*
- * Production-grade lexical analyzer using a table-driven FSM approach
- * Features:
- * - Table-driven state transitions for efficiency
- * - Buffer management with lookahead
- * - Multiple token types (keywords, identifiers, numbers, operators)
- * - Source location tracking
- * - Error reporting and recovery
- * - Symbol table for identifiers and keywords
- */
-
 // Maximum lexeme length
 #define MAX_LEXEME_LENGTH 256
 
-//not implemented yet
-#define MAX_INT_LENGTH
+// max length for the data type of "number"
+#define MAX_INT_LENGTH 100
 
-// Maximum number of keywords
+// Maximum number of keywords (can be increased to add new keywords to the language)
 #define MAX_KEYWORDS 6
 
 // Maximum size of symbol table
 #define SYMBOL_TABLE_SIZE 1024
 
-// Token çeşitleri
+// Token types
 typedef enum {
     TOKEN_EOF = 0,
     TOKEN_IDENTIFIER,
@@ -42,21 +31,20 @@ typedef enum {
     TOKEN_ERROR
 } TokenType;
 
-// Alınan karakterlerin bulunduğu yer (error handling ve token konumu için)
+// the location of characters (for error handling and token location)
 typedef struct {
     int line;
     int column;
     const char* filename;
 } SourceLocation;
 
-// Token yapısı
+// Token structure
 typedef struct {
     TokenType type;
     char lexeme[MAX_LEXEME_LENGTH];
     SourceLocation location;
     union {
         long long int_value;
-        double float_value;
         int symbol_index;
     } value;
 } Token;
@@ -68,7 +56,7 @@ typedef struct {
     bool is_keyword;
 } SymbolEntry;
 
-// State type
+// State types
 typedef enum {
     STATE_START = 0,
     STATE_IDENTIFIER,
@@ -87,7 +75,8 @@ typedef enum {
     NUM_STATES
 } State;
 
-// Karakter çeşitleri
+// character types
+// !!should be updated when new characters are added to the language!!
 typedef enum {
     CHAR_ALPHA = 0,   // a-z, A-Z, _
     CHAR_DIGIT,       // 0-9
@@ -123,7 +112,7 @@ typedef struct {
     char lexeme_buffer[MAX_LEXEME_LENGTH];
     int lexeme_length;
     
-    // Sembol Tablosu (Keyword'ler ve identifier'lar bulunur)
+    // Symbol table (contains Keywords and identifiers)
     SymbolEntry symbol_table[SYMBOL_TABLE_SIZE];
     int symbol_count;
     
@@ -131,14 +120,14 @@ typedef struct {
     char* keywords[MAX_KEYWORDS];
     int keyword_count;
     
-    // Geçiş tablosu
+    // transition tabl (FINITE STATE MACHINE LOGIC)
     State transition_table[NUM_STATES][NUM_CHAR_CLASSES];
     
-    // Hata mesajı alanı
+    // error message string
     char error_msg[256];
 } LexContext;
 
-// FONKSIYON TANIMLAMALARI
+// FUNCTION DECLARATIONS
 void init_lexer(LexContext* ctx, FILE* input, const char* filename);
 void setup_transition_table(LexContext* ctx);
 void add_keyword(LexContext* ctx, const char* keyword);
@@ -153,6 +142,7 @@ void print_token(Token token);
 void report_error(LexContext* ctx, const char* message);
 
 // LEXER INITIALISE
+/*****************/
 void init_lexer(LexContext* ctx, FILE* input, const char* filename) {
     ctx->input = input;
     ctx->buffer_pos = 0;
@@ -166,13 +156,13 @@ void init_lexer(LexContext* ctx, FILE* input, const char* filename) {
     ctx->location.column = 0;
     ctx->location.filename = filename;
     
-    // Sembol tablosu için hafıza ayırma
+    // allocate memory for symbol table
     memset(ctx->symbol_table, 0, sizeof(ctx->symbol_table));
     
-    // Geçiş tablosu tanım
+    // initialise the transition table
     setup_transition_table(ctx);
     
-    // Keyword'leri ekle
+    // add all the keywords that the language has
     add_keyword(ctx, "write");
     add_keyword(ctx, "newline");
     add_keyword(ctx, "repeat");
@@ -181,9 +171,10 @@ void init_lexer(LexContext* ctx, FILE* input, const char* filename) {
     add_keyword(ctx, "and");
 }
 
-// GEÇİŞ TABLOSU OLUŞTUR
+// SETUP THE TRANSITION TABLE FUNCTION
+/************************************/
 void setup_transition_table(LexContext* ctx) {
-    // Tüm state'ler varsayılan olarak STATE_RETURN
+    // ALL STATES ARE STATE_RETURN BY DEFAULT
     for (int i = 0; i < NUM_STATES; i++) {
         for (int j = 0; j < NUM_CHAR_CLASSES; j++) {
             if (j == CHAR_EOF) {
@@ -194,11 +185,11 @@ void setup_transition_table(LexContext* ctx) {
         }
     }
     
-    // START STATE GEÇİŞLERİ
+    // START STATE TRANSITIONS
     ctx->transition_table[STATE_START][CHAR_ALPHA] = STATE_IDENTIFIER;
     ctx->transition_table[STATE_START][CHAR_DIGIT] = STATE_INTEGER;
-    ctx->transition_table[STATE_START][CHAR_OPERATOR] = STATE_OPERATOR;
-	ctx->transition_table[STATE_START][CHAR_DASH] = STATE_DASH;
+    ctx->transition_table[STATE_START][CHAR_OPERATOR] = STATE_OPERATOR; // operators require exactly two characters
+    ctx->transition_table[STATE_START][CHAR_DASH] = STATE_DASH;
     ctx->transition_table[STATE_START][CHAR_QUOTE] = STATE_STRING;
     ctx->transition_table[STATE_START][CHAR_STAR] = STATE_COMMENT;
     ctx->transition_table[STATE_START][CHAR_OPENB] = STATE_FINAL;
@@ -207,32 +198,33 @@ void setup_transition_table(LexContext* ctx) {
     ctx->transition_table[STATE_START][CHAR_EOL] = STATE_EOL;
 
 
+    // ALL EOF CHARS LEAD TO STATE_EOF
     for (int i = 0; i < NUM_STATES; i++) {
             ctx->transition_table[i][CHAR_EOF] = STATE_EOF;
         }
     
+
     for (int j = 0; j < NUM_CHAR_CLASSES; j++) {
             ctx->transition_table[STATE_RETURN][j] = STATE_START;
         }
     
-    // IDENTIFIER state geçişleri
+    // IDENTIFIER STATE TRANSITIONS
     ctx->transition_table[STATE_IDENTIFIER][CHAR_ALPHA] = STATE_IDENTIFIER;
     ctx->transition_table[STATE_IDENTIFIER][CHAR_DIGIT] = STATE_IDENTIFIER;
-    //ctx->transition_table[STATE_IDENTIFIER][CHAR_WHITESPACE] = STATE_RETURN; ///////////////////
 
-    // INTEGER state geçişleri
+    // INTEGER STATE TRANSITIONS
     ctx->transition_table[STATE_INTEGER][CHAR_DIGIT] = STATE_INTEGER;
     
-    // OPERATOR state geçişleri
-    ctx->transition_table[STATE_OPERATOR][CHAR_EQUALS] = STATE_FINAL;
+    // OPERATOR STATE TRANSITIONS
+    ctx->transition_table[STATE_OPERATOR][CHAR_EQUALS] = STATE_FINAL; // assignment operator and increment operator
 
 
-    //DASH
+    // DASH STATE TRANSITIONS
     ctx->transition_table[STATE_DASH][CHAR_DIGIT] = STATE_INTEGER;
-    ctx->transition_table[STATE_DASH][CHAR_EQUALS] = STATE_FINAL; /////////////////////
+    ctx->transition_table[STATE_DASH][CHAR_EQUALS] = STATE_FINAL; // decrement operator
     
-    // COMMENT_LINE state geçişleri
-    ctx->transition_table[STATE_COMMENT][CHAR_STAR] = STATE_START; ///////////////////////
+    // COMMENT_LINE STATE TRANSITIONS
+    ctx->transition_table[STATE_COMMENT][CHAR_STAR] = STATE_START; 
     ctx->transition_table[STATE_COMMENT][CHAR_EOF] = STATE_ERROR;
     for (int j = 0; j < NUM_CHAR_CLASSES; j++) {
         if (j != CHAR_STAR && j != CHAR_EOF) {
@@ -241,7 +233,7 @@ void setup_transition_table(LexContext* ctx) {
         
     }
     
-    // STRING state geçişleri
+    // STRING STATE TRANSITIONS
     ctx->transition_table[STATE_STRING][CHAR_QUOTE] = STATE_FINAL;
     ctx->transition_table[STATE_STRING][CHAR_EOF] = STATE_ERROR;
     for (int j = 0; j < NUM_CHAR_CLASSES; j++) {
@@ -252,7 +244,10 @@ void setup_transition_table(LexContext* ctx) {
 
 }
 
-// keyword kaydetme fonks
+// END OF SETUP_TRANSITION_TABLE
+/******************************/
+
+// function to add keywords to the symbol table
 void add_keyword(LexContext* ctx, const char* keyword) {
     if (ctx->keyword_count < MAX_KEYWORDS) {
         ctx->keywords[ctx->keyword_count] = strdup(keyword);
@@ -262,6 +257,7 @@ void add_keyword(LexContext* ctx, const char* keyword) {
 }
 
 // character class
+// !!should be updated when new characters are added to the language!!
 CharClass get_char_class(int c) {
     if (c == EOF) return CHAR_EOF;
     if (isalpha(c) || c == '_') return CHAR_ALPHA;
@@ -271,16 +267,16 @@ CharClass get_char_class(int c) {
     if (isspace(c)) return CHAR_WHITESPACE;
     if (strchr(":+", c)) return CHAR_OPERATOR;
     if (c =='=') return CHAR_EQUALS;
-	if (c == '-') return CHAR_DASH;
+    if (c == '-') return CHAR_DASH;
     if (c == ';') return CHAR_EOL;
     if (c == '{') return CHAR_OPENB;
     if (c == '}') return CHAR_CLOSEB;
     return CHAR_OTHER;
 }
 
-// sonraki karakteri oku
+// return the next char
 int next_char(LexContext* ctx) {
-    // buffer boşsa buffer'a yenilerini ekle
+    // add new chars if buffer is empty (buffered reader logic)
     if (ctx->buffer_pos >= ctx->buffer_size) {
         ctx->buffer_size = fread(ctx->buffer, 1, sizeof(ctx->buffer), ctx->input);
         ctx->buffer_pos = 0;
@@ -289,10 +285,10 @@ int next_char(LexContext* ctx) {
         }
     }
 
-    //karakteri bufferdan al
+    // get the next character from buffer and move forward the position
     int c = ctx->buffer[ctx->buffer_pos++];
     
-    // konumu ilerlet
+    // move forward the error handler position
     if (c == '\n') {
         ctx->location.line++;
         ctx->location.column = 0;
@@ -303,7 +299,7 @@ int next_char(LexContext* ctx) {
     return c;
 }
 
-// bir karakter geri dön
+// go back one char
 void unget_char(LexContext* ctx) {
     if (ctx->buffer_pos > 0) {
         ctx->buffer_pos--;
@@ -316,7 +312,7 @@ void unget_char(LexContext* ctx) {
     }
 }
 
-// tabloya sembol ekle (identifier, keyword)
+// add identifier or keyword to symbol table
 int add_to_symbol_table(LexContext* ctx, const char* name, TokenType type, bool is_keyword) {
     // First check if it already exists
     int index = lookup_symbol(ctx, name);
@@ -324,7 +320,7 @@ int add_to_symbol_table(LexContext* ctx, const char* name, TokenType type, bool 
         return index;
     }
     
-    // ekle
+    // add
     if (ctx->symbol_count < SYMBOL_TABLE_SIZE) {
         ctx->symbol_table[ctx->symbol_count].name = strdup(name); // passed by value
         ctx->symbol_table[ctx->symbol_count].type = type;
@@ -332,12 +328,11 @@ int add_to_symbol_table(LexContext* ctx, const char* name, TokenType type, bool 
         return ctx->symbol_count++;
     }
     
-    // tablo dolu
+    // table full
     report_error(ctx, "Symbol table overflow");
     return -1;
 }
 
-// sembol ara
 int lookup_symbol(LexContext* ctx, const char* name) {
     for (int i = 0; i < ctx->symbol_count; i++) {
         if (strcmp(ctx->symbol_table[i].name, name) == 0) {
@@ -346,7 +341,8 @@ int lookup_symbol(LexContext* ctx, const char* name) {
     }
     return -1;
 }
-// SONRAKİ TOKENİ GETİR
+// RETURNS THE NEXT TOKEN (STATE TRANSITION LOGIC HAPPENS HERE)
+/*************************************************************/
 Token get_next_token(LexContext* ctx) {
     Token token;
     State state = STATE_START;
@@ -358,7 +354,7 @@ Token get_next_token(LexContext* ctx) {
     ctx->lexeme_length = 0;
     ctx->lexeme_buffer[0] = '\0';
     
-    // karakterleri işler, her get_next_token'de lexeme sonuna kadar çalışır
+    // process the characters. in every get_next_token, works until the lexeme end
     while (state != STATE_FINAL && state != STATE_ERROR && state != STATE_RETURN) {
         // Get next character if needed
         if (state == STATE_START || state == STATE_COMMENT) {
@@ -381,7 +377,7 @@ Token get_next_token(LexContext* ctx) {
         } else if (state == STATE_RETURN || state == STATE_ERROR) {
             // We've reached a return or error state
             if (state == STATE_RETURN) {
-                // return state karakteri geri yollar
+                // STATE_RETURN ungets the char
                 unget_char(ctx);
             } else if (state == STATE_ERROR) {
                 if (prev_state == STATE_COMMENT) {
@@ -400,7 +396,7 @@ Token get_next_token(LexContext* ctx) {
         } else if (state == STATE_EOF) {
             break;
         } else {
-            // lexeme buffer'a karakteri ekle
+            // add character to the lexeme buffer (this creates the valid token)
             if (ctx->lexeme_length < MAX_LEXEME_LENGTH - 1) {
                 ctx->lexeme_buffer[ctx->lexeme_length++] = ctx->current_char;
                 if (state == STATE_FINAL) break;
@@ -417,13 +413,13 @@ Token get_next_token(LexContext* ctx) {
     }
     
     
-    // lexeme sonlandır (null termination)
+    // end the lexeme string (null termination)
     ctx->lexeme_buffer[ctx->lexeme_length] = '\0';
 
     token.location = token_start;
     strncpy(token.lexeme, ctx->lexeme_buffer, MAX_LEXEME_LENGTH);
     
-    // token türü belirle
+    // determine the token type
     if (state == STATE_ERROR) {
         token.type = TOKEN_ERROR;
     } else if (state == STATE_EOF) {
@@ -437,13 +433,13 @@ Token get_next_token(LexContext* ctx) {
     } else if (char_class == CHAR_CLOSEB) {
         token.type = TOKEN_CLOSEB;
     } else if (prev_state == STATE_IDENTIFIER) {
-        // keyword kontrolü
+        // keyword control
         int sym_idx = lookup_symbol(ctx, token.lexeme);
         if (sym_idx != -1 && ctx->symbol_table[sym_idx].is_keyword) {
             token.type = TOKEN_KEYWORD;
         } else {
             token.type = TOKEN_IDENTIFIER;
-            // sembol ekle
+            // add symbol
             if (sym_idx == -1) {
                 sym_idx = add_to_symbol_table(ctx, token.lexeme, TOKEN_IDENTIFIER, false);
             }
@@ -460,6 +456,8 @@ Token get_next_token(LexContext* ctx) {
     
     return token;
 }
+/***********************/
+// END OF GET_NEXT_TOKEN
 
 // Report lexical error
 void report_error(LexContext* ctx, const char* message) {
@@ -506,12 +504,12 @@ void print_token(Token token) {
 
 int main(int argc, char *argv[]) {
 
-	// INPUT OUTPUT DOSYA MANIPULASYONU 
+	// INPUT OUTPUT FILE MANIPULATION 
 	if (argc != 2) {
 		fprintf(stderr, "Usage: %s <input_filename>\n", argv[0]);
 		return 1;
 	}
-	char *input_filename = argv[1]; // KOD DOSYASININ ADI
+	char *input_filename = argv[1]; // NAME OF THE CODE FILE
 	char base_filename[256];
 	char output_filename[256];
 	char *dot_position;
@@ -522,8 +520,8 @@ int main(int argc, char *argv[]) {
 	strncpy(base_filename, input_filename, base_length);
 	base_filename[base_length] = 0; // NULL TERMINATION
 	
-	sprintf(output_filename, "%s.lx", base_filename); // lx uzantılı dosya ismi output_filename'de depolanır
-	// I/O DOSYA MANIPULASYONU SONU
+	sprintf(output_filename, "%s.lx", base_filename); // lx file name is stored in output_filename
+	// END OF I/O FILE MANIPULATION
 
 	inputFile = fopen(input_filename, "r");
 	outputFile = fopen(output_filename, "w");
