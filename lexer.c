@@ -389,6 +389,7 @@ Token get_next_token(LexContext* ctx) {
                 } else if (char_class == CHAR_OTHER) 
                 {
                     report_error(ctx, "Unknown Character");
+                    state = prev_state;
                     break;
                 }
             }
