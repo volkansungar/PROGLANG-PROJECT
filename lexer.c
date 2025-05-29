@@ -11,6 +11,8 @@
 // max length for the data type of "number"
 #define MAX_INT_LENGTH 100
 
+#define MAX_VAR_LENGTH 20
+
 // Maximum number of keywords (can be increased to add new keywords to the language)
 #define MAX_KEYWORDS 6
 
@@ -243,7 +245,6 @@ void setup_transition_table(LexContext* ctx) {
     }
 
 }
-
 // END OF SETUP_TRANSITION_TABLE
 /******************************/
 
@@ -434,6 +435,10 @@ Token get_next_token(LexContext* ctx) {
     } else if (char_class == CHAR_CLOSEB) {
         token.type = TOKEN_CLOSEB;
     } else if (prev_state == STATE_IDENTIFIER) {
+        if (ctx->lexeme_length > MAX_VAR_LENGTH - 1) {
+            token.type = TOKEN_ERROR; 
+            report_error(ctx, "Variable too long");
+        } else {
         // keyword control
         int sym_idx = lookup_symbol(ctx, token.lexeme);
         if (sym_idx != -1 && ctx->symbol_table[sym_idx].is_keyword) {
@@ -446,9 +451,14 @@ Token get_next_token(LexContext* ctx) {
             }
             token.value.symbol_index = sym_idx;
         }
+        }
     } else if (prev_state == STATE_INTEGER) {
+        if (ctx->lexeme_length > MAX_INT_LENGTH - 1) {
+            token.type = TOKEN_ERROR;
+            report_error(ctx, "Integer too long");
+        } else {
         token.type = TOKEN_INTEGER;
-        token.value.int_value = atoll(token.lexeme);
+        token.value.int_value = atoll(token.lexeme);}
     } else if (prev_state == STATE_STRING) {
         token.type = TOKEN_STRING;
     } else {
