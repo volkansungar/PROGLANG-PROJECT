@@ -106,7 +106,7 @@ typedef struct {
     int buffer_pos;
     int buffer_size;
     
-    // Anlık karakter
+    // current character
     int current_char;
     SourceLocation location;
     
@@ -122,7 +122,7 @@ typedef struct {
     char* keywords[MAX_KEYWORDS];
     int keyword_count;
     
-    // transition tabl (FINITE STATE MACHINE LOGIC)
+    // transition table (FINITE STATE MACHINE LOGIC)
     State transition_table[NUM_STATES][NUM_CHAR_CLASSES];
     
     // error message string
@@ -197,6 +197,7 @@ void setup_transition_table(LexContext* ctx) {
     ctx->transition_table[STATE_START][CHAR_OPENB] = STATE_FINAL;
     ctx->transition_table[STATE_START][CHAR_CLOSEB] = STATE_FINAL;
     ctx->transition_table[STATE_START][CHAR_WHITESPACE] = STATE_START;
+    ctx->transition_table[STATE_START][CHAR_EQUALS] = STATE_ERROR;
     ctx->transition_table[STATE_START][CHAR_EOL] = STATE_EOL;
 
 
@@ -435,6 +436,7 @@ Token get_next_token(LexContext* ctx) {
     } else if (char_class == CHAR_CLOSEB) {
         token.type = TOKEN_CLOSEB;
     } else if (prev_state == STATE_IDENTIFIER) {
+            // check if variable is not too long
         if (ctx->lexeme_length > MAX_VAR_LENGTH - 1) {
             token.type = TOKEN_ERROR; 
             report_error(ctx, "Variable too long");
@@ -453,6 +455,7 @@ Token get_next_token(LexContext* ctx) {
         }
         }
     } else if (prev_state == STATE_INTEGER) {
+        // check if integer is not too long
         if (ctx->lexeme_length > MAX_INT_LENGTH - 1) {
             token.type = TOKEN_ERROR;
             report_error(ctx, "Integer too long");
