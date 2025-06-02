@@ -31,7 +31,6 @@ typedef enum {
     STATE_IDENTIFIER,
     STATE_INTEGER,
     STATE_INCREMENT,
-    STATE_DECREMENT,
     STATE_ASSIGN,
     STATE_STRING,
     STATE_COMMENT,
@@ -192,7 +191,6 @@ void setup_transition_table(LexContext* ctx) {
 
     // OPERATOR STATE TRANSITIONS
     ctx->transition_table[STATE_INCREMENT][CHAR_EQUALS] = STATE_FINAL; // assignment operator and increment operator
-    ctx->transition_table[STATE_DECREMENT][CHAR_EQUALS] = STATE_FINAL;
     ctx->transition_table[STATE_ASSIGN][CHAR_EQUALS] = STATE_FINAL;
 
 
@@ -398,7 +396,7 @@ Token get_next_token(LexContext* ctx) {
         token.type = TOKEN_ASSIGN;
     } else if (prev_state == STATE_INCREMENT) {
         token.type = TOKEN_INCREMENT;
-    } else if (prev_state == STATE_DECREMENT) {
+    } else if (prev_state == STATE_DASH) {
         token.type = TOKEN_DECREMENT;
     } else if (prev_state == STATE_EOL) {
         token.type = TOKEN_EOL;
