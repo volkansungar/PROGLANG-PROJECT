@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include "lexer.h"
 #include "parser.h" // Include the new parser header
+#include "interpreter.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -120,6 +121,8 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Usage: %s <input_filename>\n", argv[0]);
         return EXIT_FAILURE;
     }
+
+    printf("DEBUG: AST_PROGRAM enum value: %d\n", AST_PROGRAM);
 
     // --- 1. Define Grammar Symbols ---
     // Non-terminals
@@ -368,12 +371,15 @@ productions_array[prod_idx] = create_production(list_element_nt, list_elem_newli
     printf("\nAttempting to parse sample tokens...\n");
     ASTNode* root_ast = parse(&grammar, tokens, num_test_tokens);
 
-    // --- 8. Inspect AST ---
+// --- 8. Inspect AST and Interpret ---
     if (root_ast) {
         printf("\n--- Parsing Successful! Generated AST: ---\n");
+        printf("DEBUG: root_ast type received in main: %d (expected AST_PROGRAM: %d)\n", root_ast->type, AST_PROGRAM);
         print_ast_node(root_ast, 0);
-        // At this point, `root_ast` is the root of your Abstract Syntax Tree.
-        // You can now traverse this AST to perform interpretation or code generation.
+
+        // --- NEW: Perform Interpretation ---
+        interpret_program(root_ast); // Call your interpreter with the root AST
+
         free_ast_node(root_ast); // Free the entire AST
     } else {
         fprintf(stderr, "\n--- Parsing Failed! ---\n");

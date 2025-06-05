@@ -53,9 +53,11 @@ typedef struct GrammarSymbol {
 } GrammarSymbol;
 
 // Abstract Syntax Tree (AST) Node Types
+// Explicitly assign values to prevent overlap with TokenType and NonTerminalType
 typedef enum {
-    AST_PROGRAM,
+    AST_PROGRAM = 2000, // Start AST node types from a distinct high value
     AST_STATEMENT_LIST,
+    AST_STATEMENT,
     AST_DECLARATION,
     AST_ASSIGNMENT,
     AST_INCREMENT,
@@ -69,9 +71,9 @@ typedef enum {
     AST_INTEGER_LITERAL,
     AST_STRING_LITERAL,
     AST_NEWLINE,
-    AST_INT_VALUE, // NEW: AST node for expressions (representing integer or identifier value)
-    AST_KEYWORD,   // NEW: Generic keyword/punctuation node for AST
-    AST_ERROR
+    AST_INT_VALUE, // AST node for expressions (representing integer or identifier value)
+    AST_KEYWORD,   // Generic keyword/punctuation node for AST
+    AST_ERROR_NODE_TYPE // Renamed from AST_ERROR to avoid potential direct name clashes
 } ASTNodeType;
 
 // Structure for an AST Node

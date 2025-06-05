@@ -32,9 +32,9 @@ typedef enum {
     STATE_INTEGER,
     STATE_PLUS,         // For '+' and '+='
     STATE_COLON,        // For ':' and ':='
-    STATE_DASH,         // For '-' and '-='
+    STATE_DASH,         // For '-' and '-=' (and negative numbers)
     STATE_STRING,
-    STATE_COMMENT,
+    STATE_COMMENT_POTENTIAL_START, // For the first '*' of a '**' comment
     STATE_FINAL,        // A state where a token is recognized
     STATE_ERROR,
     STATE_EOL,          // End of line (semicolon)
@@ -112,7 +112,6 @@ void free_lex_context(void* ctx_ptr) {
         for (int i = 0; i < ctx->symbol_count; ++i) {
             free(ctx->symbol_table[i].name); // Free memory allocated by strdup
         }
-        // No need to free ctx itself as it's typically stack-allocated
     }
 }
 
@@ -124,7 +123,7 @@ const char* token_type_str(TokenType type) {
         case TOKEN_IDENTIFIER: return "Identifier";
         case TOKEN_ASSIGN: return "Assign";
         case TOKEN_INTEGER: return "IntConstant";
-        case TOKEN_NUMBER: return "NumberKeyword"; // Added
+        case TOKEN_NUMBER: return "NumberKeyword";
         case TOKEN_TIMES: return "Times";
         case TOKEN_NEWLINE: return "Newline";
         case TOKEN_REPEAT: return "Repeat";
@@ -168,8 +167,6 @@ Token* lexer(FILE* inputFile, char* input_filename, int* num_tokens_out) {
     Token* tokens = (Token*)malloc(capacity * sizeof(Token));
     if (!tokens) {
         fprintf(stderr, "Memory allocation failed for tokens array.\n");
-        // No need to call free_lex_context here as the context is stack allocated.
-        // The names in symbol_table need to be freed later in main.
         if (num_tokens_out) *num_tokens_out = 0;
         return NULL;
     }
@@ -181,7 +178,6 @@ Token* lexer(FILE* inputFile, char* input_filename, int* num_tokens_out) {
     rewind(inputFile);
 
     // Re-initialize lexer context after rewind, to ensure consistent state
-    // Especially for the initial read of `current_char`
     init_lexer(&ctx, inputFile, input_filename);
 
 
@@ -193,7 +189,6 @@ Token* lexer(FILE* inputFile, char* input_filename, int* num_tokens_out) {
             if (!new_tokens) {
                 fprintf(stderr, "Memory re-allocation failed for tokens array.\n");
                 free(tokens); // Free original array if realloc fails
-                // No need to call free_lex_context here.
                 if (num_tokens_out) *num_tokens_out = 0;
                 return NULL;
             }
@@ -208,31 +203,23 @@ Token* lexer(FILE* inputFile, char* input_filename, int* num_tokens_out) {
 
     printf("Lexical analysis completed.\n");
 
-    // If an error occurred and it's not EOF, we might want to return less tokens
-    // or handle error state differently. For now, include the error token.
     if (token.type == TOKEN_ERROR) {
         if (num_tokens_out) *num_tokens_out = tokencount;
-        // Call free_lex_context to cleanup internal symbol table names.
         free_lex_context(&ctx);
-        return tokens; // Return tokens up to the error
+        return tokens;
     }
 
     // Shrink to fit actual token count (optional, but good practice)
     Token* final_tokens = (Token*)realloc(tokens, tokencount * sizeof(Token));
     if (!final_tokens) {
         fprintf(stderr, "Final re-allocation failed, returning original array.\n");
-        // In a real scenario, you might want to handle this more robustly
         if (num_tokens_out) *num_tokens_out = tokencount;
-        // Call free_lex_context to cleanup internal symbol table names.
         free_lex_context(&ctx);
-        return tokens; // Return the potentially oversized array
+        return tokens;
     }
     tokens = final_tokens;
 
-    if (num_tokens_out) *num_tokens_out = tokencount; // Return the actual count
-    // The LexContext `ctx` is a stack variable, so its memory is automatically reclaimed.
-    // However, the `name` members within `symbol_table` are heap-allocated via `strdup`
-    // and need to be freed manually. This is handled by `free_lex_context` before returning.
+    if (num_tokens_out) *num_tokens_out = tokencount;
     free_lex_context(&ctx); // Free symbol table entries
     return tokens;
 }
@@ -248,13 +235,10 @@ static void init_lexer(LexContext* ctx, FILE* input, const char* filename) {
     ctx->symbol_count = 0;
 
     ctx->location.line = 1;
-    ctx->location.column = 0; // Column 0 means before the first character of the line.
+    ctx->location.column = 0;
 
-    // filename needs to be a persistent string, assuming it is from argv or a static literal.
-    // If it were dynamic, strdup would be needed here.
     ctx->location.filename = filename;
 
-    // Initialize symbol table memory to all zeros
     memset(ctx->symbol_table, 0, sizeof(ctx->symbol_table));
 
     // Setup the FSM transition table
@@ -266,7 +250,7 @@ static void init_lexer(LexContext* ctx, FILE* input, const char* filename) {
     add_to_symbol_table(ctx, "repeat", TOKEN_REPEAT, true);
     add_to_symbol_table(ctx, "newline", TOKEN_NEWLINE, true);
     add_to_symbol_table(ctx, "times", TOKEN_TIMES, true);
-    add_to_symbol_table(ctx, "number", TOKEN_NUMBER, true); // Re-added "number" keyword
+    add_to_symbol_table(ctx, "number", TOKEN_NUMBER, true);
 
     // Read the first character to initialize ctx->current_char
     ctx->current_char = next_char(ctx);
@@ -288,7 +272,7 @@ static void setup_transition_table(LexContext* ctx) {
     ctx->transition_table[STATE_START][CHAR_COLON] = STATE_COLON;
     ctx->transition_table[STATE_START][CHAR_DASH] = STATE_DASH;
     ctx->transition_table[STATE_START][CHAR_QUOTE] = STATE_STRING;
-    ctx->transition_table[STATE_START][CHAR_STAR] = STATE_COMMENT; // Start of a comment (e.g., "**" style)
+    ctx->transition_table[STATE_START][CHAR_STAR] = STATE_FINAL; // A single '*' -> TOKEN_STAR
     ctx->transition_table[STATE_START][CHAR_OPENB] = STATE_FINAL; // {
     ctx->transition_table[STATE_START][CHAR_CLOSEB] = STATE_FINAL; // }
     ctx->transition_table[STATE_START][CHAR_LPAREN] = STATE_FINAL; // (
@@ -310,9 +294,9 @@ static void setup_transition_table(LexContext* ctx) {
     // Transitions for COLON state (:, :=)
     ctx->transition_table[STATE_COLON][CHAR_EQUALS] = STATE_FINAL; // :=
 
-    // Transitions for DASH state (-, -=)
+    // Transitions for DASH state (-, -=, negative numbers)
     ctx->transition_table[STATE_DASH][CHAR_EQUALS] = STATE_FINAL; // -=
-    ctx->transition_table[STATE_DASH][CHAR_DIGIT] = STATE_INTEGER; // Negative numbers, transitions to INTEGER state
+    ctx->transition_table[STATE_DASH][CHAR_DIGIT] = STATE_INTEGER; // - followed by a digit is a negative number
 
     // Transitions for STRING state
     for (int j = 0; j < NUM_CHAR_CLASSES; j++) {
@@ -320,22 +304,11 @@ static void setup_transition_table(LexContext* ctx) {
             ctx->transition_table[STATE_STRING][j] = STATE_STRING;
         }
     }
-    ctx->transition_table[STATE_STRING][CHAR_QUOTE] = STATE_FINAL; // End of string
+    // CHAR_QUOTE and CHAR_EOF are handled procedurally in get_next_token for strings
 
-    // Transitions for COMMENT state (multi-line comments starting with '*')
-    // This is simplified. Assuming a comment like `** ... **`
-    // From STATE_COMMENT, any char keeps it in COMMENT unless it's '*'
-    for (int j = 0; j < NUM_CHAR_CLASSES; j++) {
-        if (j != CHAR_STAR && j != CHAR_EOF) {
-            ctx->transition_table[STATE_COMMENT][j] = STATE_COMMENT;
-        }
-    }
-    ctx->transition_table[STATE_COMMENT][CHAR_STAR] = STATE_COMMENT; // Stays in comment, but need to check next char
-
-    // All states transition to EOF on CHAR_EOF
+    // All states transition to EOF on CHAR_EOF unless it's the start state directly to EOF
     for (int i = 0; i < NUM_STATES; i++) {
-        // Only if not already defined for a specific final token type
-        if (ctx->transition_table[i][CHAR_EOF] == STATE_ERROR || ctx->transition_table[i][CHAR_EOF] == STATE_START) {
+        if (i != STATE_START) { // EOF from START is handled explicitly
             ctx->transition_table[i][CHAR_EOF] = STATE_EOF;
         }
     }
@@ -363,23 +336,19 @@ static CharClass get_char_class(int c) {
 
 // Reads the next character from the input stream, handling buffering
 static int next_char(LexContext* ctx) {
-    // If buffer is empty, read more data from file
     if (ctx->buffer_pos >= ctx->buffer_size) {
         ctx->buffer_size = fread(ctx->buffer, 1, sizeof(ctx->buffer), ctx->input);
         ctx->buffer_pos = 0;
         if (ctx->buffer_size == 0) {
-            // End of file, return EOF and do not update location as no char was read.
             return EOF;
         }
     }
 
-    // Get the next character from the buffer
     int c = ctx->buffer[ctx->buffer_pos++];
 
-    // Update source location for error reporting
     if (c == '\n') {
         ctx->location.line++;
-        ctx->location.column = 0; // Reset column for new line (column 0 is before the first char)
+        ctx->location.column = 0;
     } else {
         ctx->location.column++;
     }
@@ -394,12 +363,18 @@ static void unget_char(LexContext* ctx) {
         // Adjust column based on the character being ungotten
         if (ctx->buffer[ctx->buffer_pos] == '\n') {
             ctx->location.line--;
-            ctx->location.column = 0; // Approximate column to start of previous line
+            // This column adjustment is approximate, as we don't know the length of the previous line.
+            // For precise column tracking after unget, one would need to store previous line lengths.
+            // For now, setting to 0 or 1 is a reasonable fallback.
+            ctx->location.column = 0;
         } else {
             ctx->location.column--;
         }
     } else {
+        // This indicates an attempt to unget beyond the current buffer or input start.
+        // It's a critical error in lexer logic.
         fprintf(stderr, "Lexer error: Attempted to unget character past buffer start.\n");
+        exit(EXIT_FAILURE); // Crash for unrecoverable state
     }
 }
 
@@ -413,7 +388,7 @@ static int add_to_symbol_table(LexContext* ctx, const char* name, TokenType type
 
     // If not, add it to the table
     if (ctx->symbol_count < SYMBOL_TABLE_SIZE) {
-        ctx->symbol_table[ctx->symbol_count].name = strdup(name); // Allocate memory for the name
+        ctx->symbol_table[ctx->symbol_count].name = strdup(name);
         if (!ctx->symbol_table[ctx->symbol_count].name) {
             report_error(ctx, "Memory allocation failed for symbol name.");
             return -1;
@@ -454,7 +429,7 @@ static Token get_next_token(LexContext* ctx) {
     State state = STATE_START;
     SourceLocation token_start_location;
 
-    // Loop to find the start of a new token, skipping whitespace and comments
+    // Outer loop to find the start of a new token, skipping whitespace and comments
     while (true) {
         token_start_location = ctx->location; // Mark start of potential token
         CharClass char_class = get_char_class(ctx->current_char);
@@ -464,7 +439,7 @@ static Token get_next_token(LexContext* ctx) {
             ctx->current_char = next_char(ctx);
             continue;
         }
-        // Handle comments
+        // Handle multi-line comments starting with "**"
         else if (char_class == CHAR_STAR) {
             int temp_char = next_char(ctx); // Read the second character
             if (temp_char == '*') { // Found "**" - multi-line comment start
@@ -495,10 +470,10 @@ static Token get_next_token(LexContext* ctx) {
                     continue; // Comment ended, go back to STATE_START to find next token
                 }
             } else {
-                // It was a single '*' not followed by another '*', so it's TOKEN_STAR
-                unget_char(ctx); // Put the temp_char back
-                // Now, current_char still holds the first '*', which will be processed as a token below
-                break; // Break from while loop to process the '*'
+                // It was a single '*' not followed by another '*', so it will be TOKEN_STAR.
+                // Put the temp_char back and let the FSM handle the single '*'.
+                unget_char(ctx);
+                break; // Break from while loop to process the '*' in the FSM
             }
         }
         // Handle EOF
@@ -521,182 +496,158 @@ static Token get_next_token(LexContext* ctx) {
     // FSM loop to build the lexeme and determine token type
     while (true) {
         CharClass current_char_class = get_char_class(ctx->current_char);
-        State next_state_from_table = ctx->transition_table[state][current_char_class];
+        State next_state = ctx->transition_table[state][current_char_class];
 
-        // Condition 1: Continue building the current token (character is consumed)
-        // This includes transitions from START to initial states for multi-char tokens,
-        // or continuing in IDENTIFIER/INTEGER/STRING states, or forming multi-char operators.
-        bool should_consume_char_and_continue = false;
-
-        // Transition from START to an initial state for multi-char tokens or continuing states
-        if (state == STATE_START && (next_state_from_table == STATE_IDENTIFIER ||
-                                      next_state_from_table == STATE_INTEGER ||
-                                      next_state_from_table == STATE_PLUS ||
-                                      next_state_from_table == STATE_COLON ||
-                                      next_state_from_table == STATE_DASH ||
-                                      next_state_from_table == STATE_STRING)) {
-            should_consume_char_and_continue = true;
-        }
-        // Continuing in a multi-character token state (e.g., Identifier, Integer)
-        else if ((state == STATE_IDENTIFIER || state == STATE_INTEGER) && next_state_from_table == state) {
-            should_consume_char_and_continue = true;
-        }
-        // Forming multi-character operators (e.g., ':=', '+=', '-=')
-        else if ((state == STATE_PLUS || state == STATE_COLON || state == STATE_DASH) && current_char_class == CHAR_EQUALS) {
-            should_consume_char_and_continue = true;
-        }
-        // Inside a string (any char except quote or EOF)
-        else if (state == STATE_STRING && current_char_class != CHAR_QUOTE && current_char_class != CHAR_EOF) {
-            should_consume_char_and_continue = true;
-        }
-
-
-        if (should_consume_char_and_continue) {
-            // Add current_char to lexeme buffer
+        // --- Special Handling for STRING state ---
+        // Strings consume all characters until a closing quote or EOF
+        if (state == STATE_STRING) {
+            if (current_char_class == CHAR_QUOTE) {
+                // End of string: Consume the quote, add to lexeme, then break.
+                if (ctx->lexeme_length < MAX_LEXEME_LENGTH - 1) {
+                    ctx->lexeme_buffer[ctx->lexeme_length++] = ctx->current_char;
+                }
+                ctx->current_char = next_char(ctx); // Consume the closing quote
+                state = STATE_FINAL; // String token is complete
+                break; // Exit FSM loop
+            } else if (current_char_class == CHAR_EOF) {
+                // Unterminated string: Report error and return TOKEN_ERROR.
+                report_error(ctx, "Unterminated string literal at EOF.");
+                token.type = TOKEN_ERROR;
+                strncpy(token.lexeme, ctx->lexeme_buffer, MAX_LEXEME_LENGTH);
+                token.lexeme[MAX_LEXEME_LENGTH - 1] = '\0';
+                return token;
+            }
+            // Consume and add character to string lexeme if not a quote or EOF
             if (ctx->lexeme_length < MAX_LEXEME_LENGTH - 1) {
                 ctx->lexeme_buffer[ctx->lexeme_length++] = ctx->current_char;
             } else {
+                report_error(ctx, "Lexeme too long (string literal).");
+                token.type = TOKEN_ERROR;
+                strncpy(token.lexeme, ctx->lexeme_buffer, MAX_LEXEME_LENGTH);
+                token.lexeme[MAX_LEXEME_LENGTH - 1] = '\0';
+                return token;
+            }
+            ctx->current_char = next_char(ctx); // Consume string character
+            continue; // Continue building the string token
+        }
+
+        // --- General FSM Transition Logic ---
+        // If the FSM transitions to a valid, non-final state (i.e., we need to keep building the token)
+        // OR it's a specific multi-char operator transition to a final state
+        if (next_state != STATE_ERROR &&
+            (next_state == state || state == STATE_START || // Continuing in same state, or starting multi-char token
+             (state == STATE_PLUS && next_state == STATE_FINAL) || // For +=
+             (state == STATE_COLON && next_state == STATE_FINAL) || // For :=
+             (state == STATE_DASH && next_state == STATE_FINAL) || // For -=
+             (state == STATE_DASH && next_state == STATE_INTEGER) )) { // For negative numbers
+
+            // Check for lexeme buffer overflow BEFORE adding character
+            if (ctx->lexeme_length >= MAX_LEXEME_LENGTH - 1) {
                 report_error(ctx, "Lexeme too long.");
                 token.type = TOKEN_ERROR;
-                break; // Exit loop, token found (error)
+                strncpy(token.lexeme, ctx->lexeme_buffer, MAX_LEXEME_LENGTH);
+                token.lexeme[MAX_LEXEME_LENGTH - 1] = '\0';
+                return token; // Return error token immediately
             }
-            state = next_state_from_table; // Advance state
+
+            // Add current_char to lexeme buffer and update state
+            ctx->lexeme_buffer[ctx->lexeme_length++] = ctx->current_char;
+            state = next_state; // Transition to the next state
             ctx->current_char = next_char(ctx); // Consume character
+        } else {
+            // The current character *terminates* the token being built,
+            // or causes an error, or is part of a single-character token
+            // that was handled by the outer loop (whitespace/comments) or `STATE_START` direct transitions.
+            break; // Token is complete, or error, exit FSM loop
         }
-        else { // Condition 2: Current character ends the token, or it's a single-character token, or an error.
-               // The `current_char` is the character that *terminated* the token being built,
-               // or it *is* the single-character token, or it's an unexpected character.
+    } // End of FSM loop
 
-            // Null-terminate the lexeme string before determining token type
-            ctx->lexeme_buffer[ctx->lexeme_length] = '\0';
-            strncpy(token.lexeme, ctx->lexeme_buffer, MAX_LEXEME_LENGTH);
-            token.lexeme[MAX_LEXEME_LENGTH - 1] = '\0'; // Ensure null-termination
+    // Post-FSM-loop processing: The token is now complete (or error).
+    // `state` holds the state *before* `current_char` terminated the token,
+    // or the final state after consuming the last character of a multi-char token.
 
-            // Determine token type based on the *state we were just in* (`state` variable)
-            switch (state) {
-                case STATE_START:
-                    // This case handles single-character tokens that directly transition from STATE_START
-                    // to a final state (like '{', '}', ';', '(', ')', '+', '*').
-                    // The `current_char` is the one that forms this token.
-                    // It needs to be added to the lexeme_buffer here.
-                    if (ctx->lexeme_length < MAX_LEXEME_LENGTH - 1) {
-                         ctx->lexeme_buffer[ctx->lexeme_length++] = ctx->current_char;
-                         ctx->lexeme_buffer[ctx->lexeme_length] = '\0'; // Null-terminate after adding
-                    }
+    // Null-terminate the lexeme string
+    ctx->lexeme_buffer[ctx->lexeme_length] = '\0';
+    strncpy(token.lexeme, ctx->lexeme_buffer, MAX_LEXEME_LENGTH);
+    token.lexeme[MAX_LEXEME_LENGTH - 1] = '\0'; // Ensure null-termination
 
-                    if (current_char_class == CHAR_OPENB) token.type = TOKEN_OPENB;
-                    else if (current_char_class == CHAR_CLOSEB) token.type = TOKEN_CLOSEB;
-                    else if (current_char_class == CHAR_LPAREN) token.type = TOKEN_LPAREN;
-                    else if (current_char_class == CHAR_RPAREN) token.type = TOKEN_RPAREN;
-                    else if (current_char_class == CHAR_PLUS) token.type = TOKEN_PLUS;
-                    else if (current_char_class == CHAR_STAR) token.type = TOKEN_STAR;
-                    else if (current_char_class == CHAR_EOL_SEMICOLON) token.type = TOKEN_EOL;
-                    else if (current_char_class == CHAR_EOF) token.type = TOKEN_EOF; // Should be caught by outer loop, but for safety.
-                    else {
-                        token.type = TOKEN_ERROR;
-                        report_error(ctx, "Unexpected single character or unhandled transition from START state.");
-                    }
-                    ctx->current_char = next_char(ctx); // Consume this single-char token
-                    break;
-
-                case STATE_IDENTIFIER: {
-                    // An identifier token has been formed, and `current_char` is the start of the next token.
-                    unget_char(ctx); // Put `current_char` back into input stream
-                    int sym_idx = lookup_symbol(ctx, ctx->lexeme_buffer);
-                    if (sym_idx != -1 && ctx->symbol_table[sym_idx].is_keyword) {
-                        token.type = ctx->symbol_table[sym_idx].type; // Matched a keyword
-                    } else {
-                        token.type = TOKEN_IDENTIFIER; // It's an identifier
-                        if (sym_idx == -1) {
-                            sym_idx = add_to_symbol_table(ctx, ctx->lexeme_buffer, TOKEN_IDENTIFIER, false);
-                        }
-                        token.value.symbol_index = sym_idx;
-                    }
-                    break;
+    switch (state) {
+        case STATE_IDENTIFIER: {
+            unget_char(ctx); // Current char belongs to the next token, put it back
+            ctx->current_char = next_char(ctx); // Re-read for next iteration to ensure `current_char` is fresh
+            int sym_idx = lookup_symbol(ctx, ctx->lexeme_buffer);
+            if (sym_idx != -1 && ctx->symbol_table[sym_idx].is_keyword) {
+                token.type = ctx->symbol_table[sym_idx].type; // Matched a keyword
+            } else {
+                token.type = TOKEN_IDENTIFIER; // It's an identifier
+                if (sym_idx == -1) { // Add new identifiers to symbol table
+                    sym_idx = add_to_symbol_table(ctx, ctx->lexeme_buffer, TOKEN_IDENTIFIER, false);
                 }
-
-                case STATE_INTEGER: {
-                    // An integer literal has been formed, and `current_char` is the start of the next token.
-                    unget_char(ctx); // Put `current_char` back into input stream
-                    token.type = TOKEN_INTEGER;
-                    token.value.int_value = atoll(ctx->lexeme_buffer); // Convert lexeme to long long
-                    break;
-                }
-
-                case STATE_PLUS: // We were in STATE_PLUS, but the current char is NOT '=' (e.g., '+ ').
-                                 // This implies it's a single '+' token.
-                    token.type = TOKEN_PLUS;
-                    unget_char(ctx); // Current char belongs to the next token
-                    break;
-
-                case STATE_COLON: // We were in STATE_COLON, but the current char is NOT '=' (e.g., ': ').
-                                  // In this grammar, a standalone ':' is an error.
-                    token.type = TOKEN_ERROR;
-                    report_error(ctx, "Unexpected standalone colon. Expected ':='.");
-                    unget_char(ctx); // Current char belongs to the next token
-                    break;
-
-                case STATE_DASH: // We were in STATE_DASH, but the current char is NOT '=' or a digit.
-                                 // A standalone '-' is currently not a defined token type (like TOKEN_SUBTRACT), so it's an error.
-                    token.type = TOKEN_ERROR;
-                    report_error(ctx, "Unexpected standalone dash. Expected '-=' or start of negative number.");
-                    unget_char(ctx); // Current char belongs to the next token
-                    break;
-
-                case STATE_STRING:
-                    // This implies we were in STATE_STRING, but `current_char_class` was CHAR_EOF.
-                    // If it was CHAR_QUOTE, it would have been handled by `should_consume_char_and_continue`.
-                    if (current_char_class == CHAR_EOF) {
-                         token.type = TOKEN_ERROR;
-                         report_error(ctx, "Unterminated string literal at EOF.");
-                         // Do not unget EOF.
-                    } else {
-                        token.type = TOKEN_ERROR;
-                        report_error(ctx, "Internal error in string lexing logic.");
-                        unget_char(ctx); // Revert last char
-                    }
-                    break;
-
-                case STATE_FINAL: // This state is reached when a multi-character token (like ':=', '+=', '-=')
-                                  // or a string (ending quote) has just been fully recognized.
-                                  // The `current_char` is already the one *after* this complete token
-                                  // because the final character of the token was consumed in `should_consume_char_and_continue`.
-                    if (strcmp(ctx->lexeme_buffer, ":=") == 0) {
-                        token.type = TOKEN_ASSIGN;
-                    } else if (strcmp(ctx->lexeme_buffer, "+=") == 0) {
-                        token.type = TOKEN_PLUS_ASSIGN;
-                    } else if (strcmp(ctx->lexeme_buffer, "-=") == 0) {
-                        token.type = TOKEN_MINUS_ASSIGN;
-                    } else if (ctx->lexeme_buffer[0] == '"' && ctx->lexeme_buffer[ctx->lexeme_length-1] == '"') {
-                        token.type = TOKEN_STRING; // String ended
-                    }
-                    else {
-                        token.type = TOKEN_ERROR;
-                        report_error(ctx, "Unknown token identified from STATE_FINAL.");
-                    }
-                    // `ctx->current_char` is already correctly advanced.
-                    break;
-
-                case STATE_EOL: // Semicolon token was directly from START to EOL.
-                    // This is handled by the `case STATE_START`
-                    token.type = TOKEN_EOL; // Should not be reached independently if `case STATE_START` is correct
-                    ctx->current_char = next_char(ctx);
-                    break;
-
-                case STATE_EOF: // EOF token was directly from START to EOF.
-                    token.type = TOKEN_EOF; // Should not be reached independently if outer loop is correct
-                    break;
-
-                default:
-                    // This catches any unexpected state or character combination that doesn't fit a known token pattern.
-                    token.type = TOKEN_ERROR;
-                    report_error(ctx, "Unhandled lexer state transition or unexpected character sequence.");
-                    // Consume the problematic character to avoid an infinite loop
-                    ctx->current_char = next_char(ctx);
-                    break;
+                token.value.symbol_index = sym_idx;
             }
-            break; // Token has been identified or an error occurred, exit lexeme building loop
+            break;
         }
+        case STATE_INTEGER: {
+            unget_char(ctx); // Current char belongs to the next token, put it back
+            ctx->current_char = next_char(ctx); // Re-read for next iteration
+            token.type = TOKEN_INTEGER;
+            token.value.int_value = atoll(ctx->lexeme_buffer); // Convert lexeme to long long
+            break;
+        }
+        case STATE_PLUS: // Single '+' token (e.g., '+ ', not '+=')
+            token.type = TOKEN_PLUS;
+            unget_char(ctx); // Current char belongs to the next token
+            ctx->current_char = next_char(ctx); // Re-read for next iteration
+            break;
+        case STATE_COLON: // Single ':' token (error in this grammar, expects ':=')
+            token.type = TOKEN_ERROR;
+            report_error(ctx, "Unexpected standalone colon. Expected ':='.");
+            unget_char(ctx); // Current char belongs to the next token
+            ctx->current_char = next_char(ctx); // Re-read for next iteration
+            break;
+        case STATE_DASH: // Single '-' token (error in this grammar, expects '-=' or negative number)
+            token.type = TOKEN_ERROR;
+            report_error(ctx, "Unexpected standalone dash. Expected '-=' or start of negative number.");
+            unget_char(ctx); // Current char belongs to the next token
+            ctx->current_char = next_char(ctx); // Re-read for next iteration
+            break;
+        case STATE_FINAL: // Multi-character tokens (:=, +=, -=) or completed string
+            if (strcmp(ctx->lexeme_buffer, ":=") == 0) {
+                token.type = TOKEN_ASSIGN;
+            } else if (strcmp(ctx->lexeme_buffer, "+=") == 0) {
+                token.type = TOKEN_PLUS_ASSIGN;
+            } else if (strcmp(ctx->lexeme_buffer, "-=") == 0) {
+                token.type = TOKEN_MINUS_ASSIGN;
+            } else if (ctx->lexeme_buffer[0] == '"' && ctx->lexeme_buffer[ctx->lexeme_length-1] == '"') {
+                token.type = TOKEN_STRING;
+            }
+            // Add other single-character tokens that transitioned to STATE_FINAL directly from STATE_START
+            else if (strcmp(ctx->lexeme_buffer, "{") == 0) token.type = TOKEN_OPENB;
+            else if (strcmp(ctx->lexeme_buffer, "}") == 0) token.type = TOKEN_CLOSEB;
+            else if (strcmp(ctx->lexeme_buffer, "(") == 0) token.type = TOKEN_LPAREN;
+            else if (strcmp(ctx->lexeme_buffer, ")") == 0) token.type = TOKEN_RPAREN;
+            else if (strcmp(ctx->lexeme_buffer, "*") == 0) token.type = TOKEN_STAR;
+            else {
+                token.type = TOKEN_ERROR;
+                report_error(ctx, "Unknown token identified from STATE_FINAL.");
+            }
+            // `ctx->current_char` is already correctly advanced beyond this token.
+            break;
+        case STATE_EOL: // Semicolon token (;)
+            token.type = TOKEN_EOL;
+            // `ctx->current_char` is already correctly advanced beyond this token.
+            break;
+        case STATE_EOF: // End of file token (should be caught by outer loop, but for safety)
+            token.type = TOKEN_EOF;
+            // `ctx->current_char` is already EOF.
+            break;
+        default:
+            // This catches any unexpected state or character combination that doesn't fit a known token pattern.
+            token.type = TOKEN_ERROR;
+            report_error(ctx, "Unhandled lexer state transition or unexpected character sequence.");
+            // Consume the problematic character to avoid an infinite loop
+            ctx->current_char = next_char(ctx);
+            break;
     }
     return token;
 }

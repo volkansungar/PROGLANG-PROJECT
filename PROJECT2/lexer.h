@@ -13,7 +13,7 @@ typedef enum {
     TOKEN_REPEAT,
     TOKEN_NEWLINE,
     TOKEN_TIMES,
-    TOKEN_NUMBER,       // Re-added: "number" keyword for type declaration
+    TOKEN_NUMBER,       // "number" keyword for type declaration
     TOKEN_INTEGER,      // For integer literals (e.g., 123)
     TOKEN_ASSIGN,       // :=
     TOKEN_PLUS_ASSIGN,  // +=
@@ -51,8 +51,9 @@ typedef struct {
 Token* lexer(FILE* inputFile, char* input_filename,int* num_tokens_out);
 void print_token(Token token);
 // Function to get the string representation of a token type
-const char* token_type_str(TokenType type); // <-- ADDED THIS PROTOTYPE
+const char* token_type_str(TokenType type);
 // Function to free resources allocated by the lexer context
 void free_lex_context(void* ctx_ptr);
 
 #endif // LEXER_H
+

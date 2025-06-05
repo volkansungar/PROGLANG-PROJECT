@@ -244,7 +244,7 @@ void print_ast_node(const ASTNode* node, int indent) {
         case AST_NEWLINE: printf("Newline\n"); break;
         case AST_INT_VALUE: printf("Int_Value\n"); break; // NEW
         case AST_KEYWORD: printf("Keyword: %s\n", node->data.keyword_lexeme); break; // NEW
-        case AST_ERROR: printf("ERROR_NODE\n"); break;
+        case AST_ERROR_NODE_TYPE: printf("ERROR_NODE\n"); break; // Updated from AST_ERROR
         default: printf("UNKNOWN_AST_NODE_TYPE (%d)\n", node->type); break;
     }
 
@@ -309,9 +309,13 @@ ASTNode* semantic_action_passthrough(ASTNode** children) {
 
 // R0: S' -> Program EOF
 ASTNode* semantic_action_program(ASTNode** children) {
-    // children[0] is Program, children[1] is EOF. We only need the Program.
+    printf("[DEBUG SA] semantic_action_program called. children[0]->type: %d (expected AST_STATEMENT_LIST: %d)\n", children[0]->type, AST_STATEMENT_LIST);
+    // children[0] is Program (which itself reduces to StatementList), children[1] is EOF.
+    // We create a new AST_PROGRAM node as the true root, containing the StatementList.
     ASTNode* program_node = create_ast_node(AST_PROGRAM, children[0]->location);
-    add_child_to_ast_node(program_node, children[0]); // Program node
+    add_child_to_ast_node(program_node, children[0]); // Add the Program's AST (which is StatementList) as a child
+
+    printf("[DEBUG SA] Created AST_PROGRAM node (type %d) at address %p, with child type %d.\n", program_node->type, (void*)program_node, children[0]->type);
     return program_node;
 }
 
@@ -348,7 +352,7 @@ ASTNode* semantic_action_declaration(ASTNode** children) {
     return declaration_node;
 }
 
-// R10: <assignment> -> IDENTIFIER := <int_value>
+// R10: <assignment> -> IDENTIFIER := <int_value> // Changed to int_value
 ASTNode* semantic_action_assignment(ASTNode** children) {
     // children[0] is IDENTIFIER, children[1] is ':=', children[2] is <int_value>
     ASTNode* assignment_node = create_ast_node(AST_ASSIGNMENT, children[0]->location); // Location of IDENTIFIER
@@ -838,24 +842,33 @@ void create_lr1_sets(const Grammar* grammar) {
         GrammarSymbol* reachable_symbols[MAX_SYMBOLS_TOTAL] = {NULL}; // Store unique symbols
         int reachable_symbols_count = 0;
 
+        bool symbol_added[MAX_SYMBOLS_TOTAL] = {false}; // To track unique symbols by ID
+
         for (int k = 0; k < current_I.count; ++k) {
             const Item item = current_I.items[k];
             const Production* p = &grammar->productions[item.production_idx];
 
             if (item.dot_pos < p->right_count) {
                 const GrammarSymbol* next_symbol = p->right_symbols[item.dot_pos];
-                bool found = false;
-                for(int s = 0; s < reachable_symbols_count; ++s) {
-                    if (reachable_symbols[s] == next_symbol) {
-                        found = true;
-                        break;
-                    }
+                int symbol_idx;
+                if (next_symbol->type == SYMBOL_TERMINAL) {
+                    symbol_idx = next_symbol->id;
+                } else { // SYMBOL_NONTERMINAL
+                    symbol_idx = next_symbol->id + (TOKEN_ERROR + 1); // Offset for non-terminals
                 }
-                if (!found && reachable_symbols_count < MAX_SYMBOLS_TOTAL) {
-                    reachable_symbols[reachable_symbols_count++] = (GrammarSymbol*)next_symbol; // Cast away const temporarily for array
-                } else if (!found) {
-                    fprintf(stderr, "Error: reachable_symbols_count exceeded MAX_SYMBOLS_TOTAL.\n");
+
+                if (symbol_idx >= MAX_SYMBOLS_TOTAL) {
+                    fprintf(stderr, "Error: Symbol ID %d out of bounds for reachable_symbols_count tracking.\n", symbol_idx);
                     exit(EXIT_FAILURE);
+                }
+
+                if (!symbol_added[symbol_idx]) {
+                    if (reachable_symbols_count >= MAX_SYMBOLS_TOTAL) {
+                        fprintf(stderr, "Error: reachable_symbols_count exceeded MAX_SYMBOLS_TOTAL.\n");
+                        exit(EXIT_FAILURE);
+                    }
+                    reachable_symbols[reachable_symbols_count++] = (GrammarSymbol*)next_symbol; // Cast away const temporarily for array
+                    symbol_added[symbol_idx] = true;
                 }
             }
         }
@@ -984,25 +997,28 @@ void build_parsing_tables(const Grammar* grammar, const ItemSetList* canonical_c
             }
         }
 
-        // Then, handle all REDUCE/ACCEPT actions for the current state
+        // Then, handle all REDUCE actions for the current state
         for (int j = 0; j < I->count; ++j) {
             Item current_item = I->items[j];
             const Production* p = &grammar->productions[current_item.production_idx];
 
             if (current_item.dot_pos == p->right_count) { // Reduction item (dot at the end)
-                // If S' -> Program . EOF, then ACTION_ACCEPT
+                // If S' -> Program . EOF, it should be a REDUCE for Production 0, followed by ACCEPT
                 if (p->left_symbol->id == grammar->start_symbol->id && current_item.lookahead == TOKEN_EOF) {
                     if (TOKEN_EOF >= grammar->terminal_count) {
                         fprintf(stderr, "Error: TOKEN_EOF (%d) out of bounds for action_table access in state %d.\n", TOKEN_EOF, i);
                         exit(EXIT_FAILURE);
                     }
-                    // Check for conflicts with existing actions (e.g., Shift/Accept, Reduce/Accept)
-                    if (action_table[i][TOKEN_EOF].type != ACTION_ERROR && action_table[i][TOKEN_EOF].type != ACTION_ACCEPT) {
-                        fprintf(stderr, "Conflict detected (Accept/Reduce or Shift/Accept) in state %d on EOF!\n", i);
-                        fprintf(stderr, "  Existing action type: %d, New action type: %d\n", action_table[i][TOKEN_EOF].type, ACTION_ACCEPT);
-                        exit(EXIT_FAILURE);
+                    // Treat ACCEPT as a special REDUCE for the start production (Production 0)
+                    if (action_table[i][TOKEN_EOF].type != ACTION_ERROR && action_table[i][TOKEN_EOF].type != ACTION_REDUCE) {
+                         fprintf(stderr, "Conflict detected (Shift/Reduce or Reduce/Reduce) in state %d on EOF for S' rule!\n", i);
+                         fprintf(stderr, "  Existing action type: %d (Target: %d), New action type: %d (Production: %d)\n",
+                                 action_table[i][TOKEN_EOF].type, action_table[i][TOKEN_EOF].target_state_or_production_id,
+                                 ACTION_REDUCE, p->production_id);
+                         exit(EXIT_FAILURE);
                     }
-                    action_table[i][TOKEN_EOF].type = ACTION_ACCEPT;
+                    action_table[i][TOKEN_EOF].type = ACTION_REDUCE; // Change to REDUCE
+                    action_table[i][TOKEN_EOF].target_state_or_production_id = p->production_id; // Set target to production 0
                 } else {
                     // REDUCE action for current_item.lookahead
                     if (current_item.lookahead >= grammar->terminal_count) {
@@ -1129,9 +1145,6 @@ ASTNode* parse(const Grammar* grammar, Token* tokens, int num_tokens) {
                 printf("SHIFT %d\n", next_state);
 
                 // Create a leaf AST node for the shifted terminal if it's relevant.
-                // For punctuation tokens like ';', '{', '}', we might not create a distinct AST node.
-                // The `create_ast_leaf_from_token` function already handles this by returning NULL
-                // for types it doesn't explicitly convert to a leaf node.
                 ASTNode* shifted_node = create_ast_leaf_from_token(&current_token);
 
                 // Push next state and token's AST node onto stack
@@ -1180,6 +1193,7 @@ ASTNode* parse(const Grammar* grammar, Token* tokens, int num_tokens) {
 
                 // Call semantic action to get AST node for LHS
                 ASTNode* lhs_ast_node = NULL;
+                printf("  Calling semantic action for production %d (%s -> ...)\n", prod_id, p->left_symbol->name);
                 if (p->semantic_action) {
                     lhs_ast_node = p->semantic_action(children_ast_nodes);
                 } else {
@@ -1188,8 +1202,24 @@ ASTNode* parse(const Grammar* grammar, Token* tokens, int num_tokens) {
                          lhs_ast_node = children_ast_nodes[0];
                     }
                 }
+                if (lhs_ast_node) {
+                    printf("  Semantic action returned ASTNode of type %d.\n", lhs_ast_node->type);
+                } else {
+                    printf("  Semantic action returned NULL.\n");
+                }
+
                 if (children_ast_nodes) {
                     free(children_ast_nodes); // Free the temporary array of child pointers
+                }
+
+                // --- NEW: Check for ACCEPTANCE after reduction of the augmented start symbol ---
+                if (prod_id == 0) { // If production 0 (S' -> Program EOF) was just reduced
+                    printf("ACCEPT (via S' reduction)\n");
+                    // The lhs_ast_node for production 0 should be the final AST_PROGRAM node
+                    // It's already pushed onto the stack correctly in the next steps.
+                    // Instead of pushing and then immediately returning, we just return it.
+                    // This node represents the complete AST.
+                    return lhs_ast_node;
                 }
 
 
@@ -1213,17 +1243,17 @@ ASTNode* parse(const Grammar* grammar, Token* tokens, int num_tokens) {
                 stack_ptr++;
                 break;
             }
-            case ACTION_ACCEPT:
-                printf("ACCEPT\n");
-                // The root of the AST should be the AST node associated with S' production.
-                // After S' -> Program EOF reduction, the AST node for Program will be at stack[1].
-                return parse_stack[1].ast_node; // Return the root AST node (Program)
+            case ACTION_ACCEPT: // This case should now ideally not be hit.
+                fprintf(stderr, "Internal Parser Error: ACTION_ACCEPT type should have been converted to REDUCE for S' rule and handled explicitly.\n");
+                return NULL; // Should be handled by REDUCE of Production 0
             case ACTION_ERROR:
             default:
-                fprintf(stderr, "\nParser Error: No valid action for state %d on token %s ('%s') at line %d, column %d.\n",
+                fprintf(stderr, "\nParser Error: No valid action for state %d on token %s ('%s') at line %d, column %d.\\n",
                         current_state, token_type_str(current_token_type), current_token.lexeme,
                         current_token.location.line, current_token.location.column);
                 return NULL; // Parsing failed
         }
     }
+    // This line should technically not be reached, but included for completeness.
+    return NULL; // Should be handled by ACCEPT or ERROR
 }
