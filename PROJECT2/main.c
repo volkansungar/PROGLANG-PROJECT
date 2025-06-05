@@ -1,18 +1,19 @@
 #include <stdio.h>
 #include "lexer.h"
-#include "parser.h"
+#include "parser.h" // Include the new parser header
 #include <string.h>
 #include <stdlib.h>
 #include <stdbool.h>
 
 // External declarations for global variables from parser.c
-extern TerminalSet firstSetsForNonTerminals[MAX_NON_TERMINALS];
-extern TerminalSet followSetsForNonTerminals[MAX_NON_TERMINALS];
+// These are now defined in parser.c and declared here as extern
+extern TerminalSet firstSetsForNonTerminals[NUM_NON_TERMINALS_DEFINED];
+extern TerminalSet followSetsForNonTerminals[NUM_NON_TERMINALS_DEFINED];
 extern ActionEntry** action_table;
 extern int** goto_table;
 extern int num_states;
-extern bool nullable_status[MAX_NON_TERMINALS];
-extern ItemSetList canonical_collection;
+extern bool nullable_status[NUM_NON_TERMINALS_DEFINED];
+extern ItemSetList canonical_collection; // Global canonical collection
 
 // --- Helper Functions for Grammar Definition ---
 
@@ -23,7 +24,7 @@ GrammarSymbol* create_terminal(int id, const char* name) {
     s->type = SYMBOL_TERMINAL;
     s->id = id;
     s->name = strdup(name);
-    if (!s->name) { fprintf(stderr, "Memory allocation failed for terminal name.\n"); free(s); exit(EXIT_FAILURE); }
+    if (!s->name) { fprintf(stderr, "Memory allocation failed for terminal name.\\n"); free(s); exit(EXIT_FAILURE); }
     return s;
 }
 
@@ -34,7 +35,7 @@ GrammarSymbol* create_non_terminal(int id, const char* name) {
     s->type = SYMBOL_NONTERMINAL;
     s->id = id;
     s->name = strdup(name);
-    if (!s->name) { fprintf(stderr, "Memory allocation failed for non-terminal name.\n"); free(s); exit(EXIT_FAILURE); }
+    if (!s->name) { fprintf(stderr, "Memory allocation failed for non-terminal name.\\n"); free(s); exit(EXIT_FAILURE); }
     return s;
 }
 
@@ -42,12 +43,14 @@ GrammarSymbol* create_non_terminal(int id, const char* name) {
 Production create_production(GrammarSymbol* left, GrammarSymbol** right, int right_count, int id, ASTNode* (*semantic_action_func)(ASTNode**)) {
     Production p;
     p.left_symbol = left;
-    p.right_symbols = (GrammarSymbol**)malloc(right_count * sizeof(GrammarSymbol*));
-    if (!p.right_symbols && right_count > 0) {
-        fprintf(stderr, "Memory allocation failed for production right symbols.\n");
-        exit(EXIT_FAILURE);
-    }
+    // Allocate memory for right_symbols only if there are symbols
+    p.right_symbols = NULL; // Initialize to NULL
     if (right_count > 0) {
+        p.right_symbols = (GrammarSymbol**)malloc(right_count * sizeof(GrammarSymbol*));
+        if (!p.right_symbols) {
+            fprintf(stderr, "Memory allocation failed for production right symbols.\\n");
+            exit(EXIT_FAILURE);
+        }
         memcpy(p.right_symbols, right, right_count * sizeof(GrammarSymbol*));
     }
     p.right_count = right_count;
@@ -60,45 +63,53 @@ Production create_production(GrammarSymbol* left, GrammarSymbol** right, int rig
 void free_grammar_data(Grammar* grammar) {
     if (!grammar) return;
 
+    // Free individual GrammarSymbol names and structures for terminals
+    // Iterate up to the true_terminal_count used during grammar definition
+    // Note: grammar->terminals is itself a dynamically allocated array of pointers
+    if (grammar->terminals) {
+        for (int i = 0; i < grammar->terminal_count; ++i) {
+            if (grammar->terminals[i]) { // Check if symbol was actually created and assigned
+                free(grammar->terminals[i]->name);
+                free(grammar->terminals[i]);
+                // Do NOT set grammar->terminals[i] to NULL here, as we're about to free the array itself.
+            }
+        }
+        free(grammar->terminals);
+        grammar->terminals = NULL;
+    }
+
+
+    // Free individual GrammarSymbol names and structures for non-terminals
+    // Iterate up to the true_non_terminal_count (NUM_NON_TERMINALS_DEFINED)
+    // Note: grammar->non_terminals is itself a dynamically allocated array of pointers
+    if (grammar->non_terminals) {
+        for (int i = 0; i < grammar->non_terminal_count; ++i) {
+            if (grammar->non_terminals[i]) { // Check if symbol was actually created and assigned
+                free(grammar->non_terminals[i]->name);
+                free(grammar->non_terminals[i]);
+                // Do NOT set grammar->non_terminals[i] to NULL here.
+            }
+        }
+        free(grammar->non_terminals);
+        grammar->non_terminals = NULL;
+    }
+
     // Free production right-hand side arrays
-    for (int i = 0; i < grammar->production_count; ++i) {
-        free(grammar->productions[i].right_symbols);
-    }
-    // Note: The `productions` array itself is typically stack-allocated in main
-    // or freed by the caller if dynamically allocated.
-
-    // Free terminal symbols
-    for (int i = 0; i < grammar->terminal_count; ++i) {
-        if (grammar->terminals[i]) {
-            free(grammar->terminals[i]->name);
-            free(grammar->terminals[i]);
+    // The `productions` member of Grammar is now a pointer to an array
+    // We assume this array itself (`productions_array` in main) is stack-allocated
+    // and only its dynamically allocated `right_symbols` need freeing.
+    if (grammar->productions) { // Check if productions pointer is valid
+        for (int i = 0; i < grammar->production_count; ++i) {
+            // Check if right_symbols was allocated for this production
+            if (grammar->productions[i].right_symbols) {
+                free(grammar->productions[i].right_symbols);
+                grammar->productions[i].right_symbols = NULL; // Prevent double free
+            }
         }
+        // If `grammar->productions` was also dynamically allocated (e.g., `malloc` for `productions_array`),
+        // then `free(grammar->productions);` would go here.
+        // But since `productions_array` is local, it's not freed here.
     }
-    // Note: The `terminals` array itself is typically stack-allocated in main.
-
-    // Free non-terminal symbols
-    for (int i = 0; i < grammar->non_terminal_count; ++i) {
-        if (grammar->non_terminals[i]) {
-            free(grammar->non_terminals[i]->name);
-            free(grammar->non_terminals[i]);
-        }
-    }
-    // Note: The `non_terminals` array itself is typically stack-allocated in main.
-}
-
-// Function to free canonical collection
-void free_canonical_collection(ItemSetList* list) {
-    if (!list) return;
-    for (int i = 0; i < list->count; ++i) {
-        if (list->sets[i]) {
-            item_set_free(list->sets[i]); // Frees items array within the ItemSet
-            free(list->sets[i]); // Frees the ItemSet struct itself
-        }
-    }
-    free(list->sets); // Frees the array of ItemSet pointers
-    list->sets = NULL;
-    list->count = 0;
-    list->capacity = 0;
 }
 
 
@@ -112,209 +123,257 @@ int main(int argc, char *argv[]) {
 
     // --- 1. Define Grammar Symbols ---
     // Non-terminals
-    GrammarSymbol* s_prime = create_non_terminal(NT_S_PRIME, "S'");
+    GrammarSymbol* s_prime = create_non_terminal(NT_S_PRIME, "S'"); // Augmented start symbol
     GrammarSymbol* program_nt = create_non_terminal(NT_PROGRAM, "Program");
     GrammarSymbol* stmt_list_nt = create_non_terminal(NT_STATEMENT_LIST, "StatementList");
+	GrammarSymbol* declaration_nt = create_non_terminal(NT_DECLARATION, "Declaration");
+	GrammarSymbol* decrement_nt = create_non_terminal(NT_DECREMENT, "Decrement");
+	GrammarSymbol* increment_nt = create_non_terminal(NT_INCREMENT, "Increment");
     GrammarSymbol* statement_nt = create_non_terminal(NT_STATEMENT, "Statement");
     GrammarSymbol* assignment_nt = create_non_terminal(NT_ASSIGNMENT, "Assignment");
     GrammarSymbol* write_stmt_nt = create_non_terminal(NT_WRITE_STATEMENT, "WriteStatement");
+	GrammarSymbol* output_list_nt = create_non_terminal(NT_OUTPUT_LIST, "OutputList");
+	GrammarSymbol* list_element_nt = create_non_terminal(NT_LIST_ELEMENT, "ListElement");
     GrammarSymbol* loop_stmt_nt = create_non_terminal(NT_LOOP_STATEMENT, "LoopStatement");
     GrammarSymbol* code_block_nt = create_non_terminal(NT_CODE_BLOCK, "CodeBlock");
-    GrammarSymbol* e_nt = create_non_terminal(NT_E, "E"); // Expression
-    GrammarSymbol* t_nt = create_non_terminal(NT_T, "T"); // Term
-    GrammarSymbol* f_nt = create_non_terminal(NT_F, "F"); // Factor
+    GrammarSymbol* int_value_nt = create_non_terminal(NT_INT_VALUE, "Int_Value"); // NEW
+
+
+    // Dynamically allocate and populate the non_terminals map, indexed by their ID
+    // This array will hold pointers to the GrammarSymbol structs
+    GrammarSymbol** all_non_terminals_map = (GrammarSymbol**)calloc(NUM_NON_TERMINALS_DEFINED, sizeof(GrammarSymbol*));
+    if (!all_non_terminals_map) {
+        fprintf(stderr, "Memory allocation failed for all_non_terminals_map.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Populate the map using their IDs as indices. Ensure IDs are within bounds.
+    if (s_prime->id < NUM_NON_TERMINALS_DEFINED) all_non_terminals_map[s_prime->id] = s_prime;
+    if (program_nt->id < NUM_NON_TERMINALS_DEFINED) all_non_terminals_map[program_nt->id] = program_nt;
+    if (stmt_list_nt->id < NUM_NON_TERMINALS_DEFINED) all_non_terminals_map[stmt_list_nt->id] = stmt_list_nt;
+    if (declaration_nt->id < NUM_NON_TERMINALS_DEFINED) all_non_terminals_map[declaration_nt->id] = declaration_nt;
+    if (decrement_nt->id < NUM_NON_TERMINALS_DEFINED) all_non_terminals_map[decrement_nt->id] = decrement_nt;
+    if (increment_nt->id < NUM_NON_TERMINALS_DEFINED) all_non_terminals_map[increment_nt->id] = increment_nt;
+    if (statement_nt->id < NUM_NON_TERMINALS_DEFINED) all_non_terminals_map[statement_nt->id] = statement_nt;
+    if (assignment_nt->id < NUM_NON_TERMINALS_DEFINED) all_non_terminals_map[assignment_nt->id] = assignment_nt;
+    if (write_stmt_nt->id < NUM_NON_TERMINALS_DEFINED) all_non_terminals_map[write_stmt_nt->id] = write_stmt_nt;
+    if (output_list_nt->id < NUM_NON_TERMINALS_DEFINED) all_non_terminals_map[output_list_nt->id] = output_list_nt;
+    if (list_element_nt->id < NUM_NON_TERMINALS_DEFINED) all_non_terminals_map[list_element_nt->id] = list_element_nt;
+    if (loop_stmt_nt->id < NUM_NON_TERMINALS_DEFINED) all_non_terminals_map[loop_stmt_nt->id] = loop_stmt_nt;
+    if (code_block_nt->id < NUM_NON_TERMINALS_DEFINED) all_non_terminals_map[code_block_nt->id] = code_block_nt;
+    if (int_value_nt->id < NUM_NON_TERMINALS_DEFINED) all_non_terminals_map[int_value_nt->id] = int_value_nt; // NEW
+
+
+    int true_non_terminal_count = NUM_NON_TERMINALS_DEFINED;
 
     // Terminals (IDs should match TokenType from lexer.h for consistency)
-    GrammarSymbol* semicolon_t = create_terminal(TOKEN_EOL, ";"); // Using TOKEN_EOL for semicolon
-    GrammarSymbol* integer_t = create_terminal(TOKEN_INTEGER, "INTEGER"); // Using TOKEN_INTEGER
-    GrammarSymbol* write_t = create_terminal(TOKEN_WRITE, "WRITE");
-    GrammarSymbol* repeat_t = create_terminal(TOKEN_REPEAT, "REPEAT");
-    GrammarSymbol* and_t = create_terminal(TOKEN_AND, "AND");
-    GrammarSymbol* times_t = create_terminal(TOKEN_TIMES, "TIMES");
-    GrammarSymbol* newline_t = create_terminal(TOKEN_NEWLINE, "NEWLINE");
-    GrammarSymbol* identifier_t = create_terminal(TOKEN_IDENTIFIER, "IDENTIFIER");
-    GrammarSymbol* string_t = create_terminal(TOKEN_STRING, "STRING");
-    GrammarSymbol* assign_t = create_terminal(TOKEN_ASSIGN, ":="); // Changed to :=
-    GrammarSymbol* plus_assign_t = create_terminal(TOKEN_PLUS_ASSIGN, "+=");
-    GrammarSymbol* minus_assign_t = create_terminal(TOKEN_MINUS_ASSIGN, "-=");
-    GrammarSymbol* lbrace_t = create_terminal(TOKEN_OPENB, "{");
-    GrammarSymbol* rbrace_t = create_terminal(TOKEN_CLOSEB, "}");
-    GrammarSymbol* plus_t = create_terminal(TOKEN_PLUS, "+");
-    GrammarSymbol* star_t = create_terminal(TOKEN_STAR, "*");
-    GrammarSymbol* lparen_t = create_terminal(TOKEN_LPAREN, "(");
-    GrammarSymbol* rparen_t = create_terminal(TOKEN_RPAREN, ")");
-    GrammarSymbol* eof_t = create_terminal(TOKEN_EOF, "$");
+    // Dynamically allocate this array so its memory can be freed via the Grammar struct
+    GrammarSymbol** all_terminals_map = (GrammarSymbol**)calloc(TOKEN_ERROR + 1, sizeof(GrammarSymbol*));
+    if (!all_terminals_map) {
+        fprintf(stderr, "Memory allocation failed for all_terminals_map.\n");
+        exit(EXIT_FAILURE);
+    }
 
-    // Array of all terminals
-    GrammarSymbol* terminals[] = {
-        semicolon_t, integer_t, write_t, repeat_t, and_t, times_t, newline_t,
-        identifier_t, string_t, assign_t, plus_assign_t, minus_assign_t,
-        lbrace_t, rbrace_t, plus_t, star_t, lparen_t, rparen_t, eof_t
-    };
-    int terminal_count = sizeof(terminals) / sizeof(terminals[0]);
+    // Assign terminal symbols to their respective indices in the map
+    all_terminals_map[TOKEN_EOL] = create_terminal(TOKEN_EOL, ";");
+    all_terminals_map[TOKEN_INTEGER] = create_terminal(TOKEN_INTEGER, "INTEGER");
+    all_terminals_map[TOKEN_WRITE] = create_terminal(TOKEN_WRITE, "WRITE");
+	all_terminals_map[TOKEN_NUMBER] = create_terminal(TOKEN_NUMBER, "NUMBER");
+    all_terminals_map[TOKEN_REPEAT] = create_terminal(TOKEN_REPEAT, "REPEAT");
+    all_terminals_map[TOKEN_AND] = create_terminal(TOKEN_AND, "AND");
+    all_terminals_map[TOKEN_TIMES] = create_terminal(TOKEN_TIMES, "TIMES");
+    all_terminals_map[TOKEN_NEWLINE] = create_terminal(TOKEN_NEWLINE, "NEWLINE");
+    all_terminals_map[TOKEN_IDENTIFIER] = create_terminal(TOKEN_IDENTIFIER, "IDENTIFIER");
+    all_terminals_map[TOKEN_STRING] = create_terminal(TOKEN_STRING, "STRING");
+    all_terminals_map[TOKEN_ASSIGN] = create_terminal(TOKEN_ASSIGN, ":=");
+    all_terminals_map[TOKEN_PLUS_ASSIGN] = create_terminal(TOKEN_PLUS_ASSIGN, "+=");
+    all_terminals_map[TOKEN_MINUS_ASSIGN] = create_terminal(TOKEN_MINUS_ASSIGN, "-=");
+    all_terminals_map[TOKEN_OPENB] = create_terminal(TOKEN_OPENB, "{");
+    all_terminals_map[TOKEN_CLOSEB] = create_terminal(TOKEN_CLOSEB, "}");
+    all_terminals_map[TOKEN_PLUS] = create_terminal(TOKEN_PLUS, "+");
+    all_terminals_map[TOKEN_STAR] = create_terminal(TOKEN_STAR, "*");
+    all_terminals_map[TOKEN_LPAREN] = create_terminal(TOKEN_LPAREN, "(");
+    all_terminals_map[TOKEN_RPAREN] = create_terminal(TOKEN_RPAREN, ")");
+    all_terminals_map[TOKEN_EOF] = create_terminal(TOKEN_EOF, "$");
 
-    // Array of all non-terminals
-    GrammarSymbol* non_terminals[] = {
-        program_nt, stmt_list_nt, statement_nt, assignment_nt,
-        write_stmt_nt, loop_stmt_nt, code_block_nt,
-        e_nt, t_nt, f_nt, s_prime
-    };
-    int non_terminal_count = sizeof(non_terminals) / sizeof(non_terminals[0]);
+    int true_terminal_count = TOKEN_ERROR + 1; // Assuming TOKEN_ERROR is the max TokenType ID used
 
-    // --- 2. Define Productions ---
-    // Increased size to accommodate new arithmetic productions
-    Production productions[21]; // Adjust size as needed, production 20 added.
+    // Production rules - this array will be copied, and its pointer assigned to grammar.productions
+    Production productions_array[MAX_PRODUCTIONS];
+    int prod_idx = 0;
 
-    // P0: S' -> Program (Augmented Start Symbol)
-    GrammarSymbol* p0_rhs[] = {program_nt};
-    productions[0] = create_production(s_prime, p0_rhs, 1, 0, semantic_action_program);
+    // --- 2. Define Productions with Semantic Actions ---
+    // Make sure to use the semantic action functions from parser.c
 
-    // P1: Program -> StatementList
-    GrammarSymbol* p1_rhs[] = {stmt_list_nt};
-    productions[1] = create_production(program_nt, p1_rhs, 1, 1, semantic_action_passthrough);
+// Augmented Grammar Start: S' -> Program EOF (always production 0)
+GrammarSymbol* s_prime_rhs[] = {program_nt, all_terminals_map[TOKEN_EOF]};
+productions_array[prod_idx] = create_production(s_prime, s_prime_rhs, 2, prod_idx, semantic_action_program); prod_idx++;
 
-    // P2: StatementList -> Statement SEMICOLON StatementList
-    GrammarSymbol* p2_rhs[] = {statement_nt, semicolon_t, stmt_list_nt};
-    productions[2] = create_production(stmt_list_nt, p2_rhs, 3, 2, semantic_action_statement_list_multi);
+// R0: <program> -> <statement_list>
+GrammarSymbol* program_rhs[] = {stmt_list_nt};
+productions_array[prod_idx] = create_production(program_nt, program_rhs, 1, prod_idx, semantic_action_passthrough); prod_idx++;
 
-    // P3: StatementList -> Statement
-    GrammarSymbol* p3_rhs[] = {statement_nt};
-    productions[3] = create_production(stmt_list_nt, p3_rhs, 1, 3, semantic_action_statement_list_single);
+// R1: <statement_list> -> <statement_list> <statement>
+GrammarSymbol* stmt_list_multi_rhs[] = {stmt_list_nt, statement_nt};
+productions_array[prod_idx] = create_production(stmt_list_nt, stmt_list_multi_rhs, 2, prod_idx, semantic_action_statement_list_multi); prod_idx++;
 
-    // P4: Statement -> Assignment
-    GrammarSymbol* p4_rhs[] = {assignment_nt};
-    productions[4] = create_production(statement_nt, p4_rhs, 1, 4, semantic_action_passthrough);
-    // P5: Statement -> WriteStatement
-    GrammarSymbol* p5_rhs[] = {write_stmt_nt};
-    productions[5] = create_production(statement_nt, p5_rhs, 1, 5, semantic_action_passthrough);
-    // P6: Statement -> LoopStatement
-    GrammarSymbol* p6_rhs[] = {loop_stmt_nt};
-    productions[6] = create_production(statement_nt, p6_rhs, 1, 6, semantic_action_passthrough);
+// R2: <statement_list> -> <statement>
+GrammarSymbol* stmt_list_single_rhs[] = {statement_nt};
+productions_array[prod_idx] = create_production(stmt_list_nt, stmt_list_single_rhs, 1, prod_idx, semantic_action_statement_list_single); prod_idx++;
+
+// R3: <statement> -> <assignment> ;
+GrammarSymbol* stmt_assign_rhs[] = {assignment_nt, all_terminals_map[TOKEN_EOL]};
+productions_array[prod_idx] = create_production(statement_nt, stmt_assign_rhs, 2, prod_idx, semantic_action_statement_with_semicolon); prod_idx++;
+
+// R4: <statement> -> <declaration> ;
+GrammarSymbol* stmt_decl_rhs[] = {declaration_nt, all_terminals_map[TOKEN_EOL]};
+productions_array[prod_idx] = create_production(statement_nt, stmt_decl_rhs, 2, prod_idx, semantic_action_statement_with_semicolon); prod_idx++;
+
+// R5: <statement> -> <decrement> ;
+GrammarSymbol* stmt_dec_rhs[] = {decrement_nt, all_terminals_map[TOKEN_EOL]};
+productions_array[prod_idx] = create_production(statement_nt, stmt_dec_rhs, 2, prod_idx, semantic_action_statement_with_semicolon); prod_idx++;
+
+// R6: <statement> -> <increment> ;
+GrammarSymbol* stmt_inc_rhs[] = {increment_nt, all_terminals_map[TOKEN_EOL]};
+productions_array[prod_idx] = create_production(statement_nt, stmt_inc_rhs, 2, prod_idx, semantic_action_statement_with_semicolon); prod_idx++;
+
+// R7: <statement> -> <write_statement> ;
+GrammarSymbol* stmt_write_rhs[] = {write_stmt_nt, all_terminals_map[TOKEN_EOL]};
+productions_array[prod_idx] = create_production(statement_nt, stmt_write_rhs, 2, prod_idx, semantic_action_statement_with_semicolon); prod_idx++;
+
+// R8: <statement> -> <loop_statement>
+GrammarSymbol* stmt_loop_rhs[] = {loop_stmt_nt};
+productions_array[prod_idx] = create_production(statement_nt, stmt_loop_rhs, 1, prod_idx, semantic_action_passthrough); prod_idx++;
+
+// R9: <declaration> -> number IDENTIFIER
+GrammarSymbol* decl_rhs[] = {all_terminals_map[TOKEN_NUMBER], all_terminals_map[TOKEN_IDENTIFIER]};
+productions_array[prod_idx] = create_production(declaration_nt, decl_rhs, 2, prod_idx, semantic_action_declaration); prod_idx++;
+
+// R10: <assignment> -> IDENTIFIER := <int_value> // Changed to int_value
+GrammarSymbol* assign_rhs[] = {all_terminals_map[TOKEN_IDENTIFIER], all_terminals_map[TOKEN_ASSIGN], int_value_nt};
+productions_array[prod_idx] = create_production(assignment_nt, assign_rhs, 3, prod_idx, semantic_action_assignment); prod_idx++;
+
+// R11: <decrement> -> IDENTIFIER -= <int_value> // Changed to int_value
+GrammarSymbol* dec_rhs[] = {all_terminals_map[TOKEN_IDENTIFIER], all_terminals_map[TOKEN_MINUS_ASSIGN], int_value_nt};
+productions_array[prod_idx] = create_production(decrement_nt, dec_rhs, 3, prod_idx, semantic_action_decrement); prod_idx++;
+
+// R12: <increment> -> IDENTIFIER += <int_value> // Changed to int_value
+GrammarSymbol* inc_rhs[] = {all_terminals_map[TOKEN_IDENTIFIER], all_terminals_map[TOKEN_PLUS_ASSIGN], int_value_nt};
+productions_array[prod_idx] = create_production(increment_nt, inc_rhs, 3, prod_idx, semantic_action_increment); prod_idx++;
+
+// R13: <write_statement> -> write <output_list>
+GrammarSymbol* write_stmt_rhs[] = {all_terminals_map[TOKEN_WRITE], output_list_nt};
+productions_array[prod_idx] = create_production(write_stmt_nt, write_stmt_rhs, 2, prod_idx, semantic_action_write_statement); prod_idx++;
+
+// R14: <loop_statement> -> repeat <int_value> times <statement> // Changed to int_value
+GrammarSymbol* loop_stmt_single_rhs[] = {all_terminals_map[TOKEN_REPEAT], int_value_nt, all_terminals_map[TOKEN_TIMES], statement_nt};
+productions_array[prod_idx] = create_production(loop_stmt_nt, loop_stmt_single_rhs, 4, prod_idx, semantic_action_loop_statement_single); prod_idx++;
+
+// R15: <loop_statement> -> repeat <int_value> times <code_block> // Changed to int_value
+GrammarSymbol* loop_stmt_block_rhs[] = {all_terminals_map[TOKEN_REPEAT], int_value_nt, all_terminals_map[TOKEN_TIMES], code_block_nt};
+productions_array[prod_idx] = create_production(loop_stmt_nt, loop_stmt_block_rhs, 4, prod_idx, semantic_action_loop_statement_block); prod_idx++;
+
+// R16: <code_block> -> { <statement_list> }
+GrammarSymbol* code_block_rhs[] = {all_terminals_map[TOKEN_OPENB], stmt_list_nt, all_terminals_map[TOKEN_CLOSEB]};
+productions_array[prod_idx] = create_production(code_block_nt, code_block_rhs, 3, prod_idx, semantic_action_code_block); prod_idx++;
+
+// R17: <output_list> -> <output_list> and <list_element>
+GrammarSymbol* output_list_multi_rhs[] = {output_list_nt, all_terminals_map[TOKEN_AND], list_element_nt};
+productions_array[prod_idx] = create_production(output_list_nt, output_list_multi_rhs, 3, prod_idx, semantic_action_output_list_multi); prod_idx++;
+
+// R18: <output_list> -> <list_element>
+GrammarSymbol* output_list_single_rhs[] = {list_element_nt};
+productions_array[prod_idx] = create_production(output_list_nt, output_list_single_rhs, 1, prod_idx, semantic_action_output_list_single); prod_idx++;
+
+// NEW: Productions for <int_value>
+// R_INT_VALUE_INTEGER: <int_value> -> INTEGER
+GrammarSymbol* int_value_int_rhs[] = {all_terminals_map[TOKEN_INTEGER]};
+productions_array[prod_idx] = create_production(int_value_nt, int_value_int_rhs, 1, prod_idx, semantic_action_int_value_from_integer); prod_idx++;
+
+// R_INT_VALUE_IDENTIFIER: <int_value> -> IDENTIFIER
+GrammarSymbol* int_value_id_rhs[] = {all_terminals_map[TOKEN_IDENTIFIER]};
+productions_array[prod_idx] = create_production(int_value_nt, int_value_id_rhs, 1, prod_idx, semantic_action_int_value_from_identifier); prod_idx++;
 
 
-    // P7: Assignment -> IDENTIFIER ASSIGN E
-    GrammarSymbol* p7_rhs[] = {identifier_t, assign_t, e_nt};
-    productions[7] = create_production(assignment_nt, p7_rhs, 3, 7, semantic_action_assignment);
-    // P8: Assignment -> IDENTIFIER PLUS_ASSIGN E
-    GrammarSymbol* p8_rhs[] = {identifier_t, plus_assign_t, e_nt};
-    productions[8] = create_production(assignment_nt, p8_rhs, 3, 8, semantic_action_plus_assign);
-    // P9: Assignment -> IDENTIFIER MINUS_ASSIGN E
-    GrammarSymbol* p9_rhs[] = {identifier_t, minus_assign_t, e_nt};
-    productions[9] = create_production(assignment_nt, p9_rhs, 3, 9, semantic_action_minus_assign);
+// R19: <list_element> -> <int_value> // Changed to int_value
+GrammarSymbol* list_elem_int_value_rhs[] = {int_value_nt};
+productions_array[prod_idx] = create_production(list_element_nt, list_elem_int_value_rhs, 1, prod_idx, semantic_action_list_element); prod_idx++;
 
-    // P10: E -> E PLUS T (Added for arithmetic)
-    GrammarSymbol* p10_rhs[] = {e_nt, plus_t, t_nt};
-    productions[10] = create_production(e_nt, p10_rhs, 3, 10, semantic_action_binary_add);
+// R20: <list_element> -> STRING
+GrammarSymbol* list_elem_string_rhs[] = {all_terminals_map[TOKEN_STRING]};
+productions_array[prod_idx] = create_production(list_element_nt, list_elem_string_rhs, 1, prod_idx, semantic_action_list_element); prod_idx++;
 
-    // P11: E -> T
-    GrammarSymbol* p11_rhs[] = {t_nt};
-    productions[11] = create_production(e_nt, p11_rhs, 1, 11, semantic_action_passthrough);
-
-    // P12: T -> T STAR F (Added for arithmetic)
-    GrammarSymbol* p12_rhs[] = {t_nt, star_t, f_nt};
-    productions[12] = create_production(t_nt, p12_rhs, 3, 12, semantic_action_binary_multiply);
-
-    // P13: T -> F
-    GrammarSymbol* p13_rhs[] = {f_nt};
-    productions[13] = create_production(t_nt, p13_rhs, 1, 13, semantic_action_passthrough);
-
-    // P14: F -> IDENTIFIER
-    GrammarSymbol* p14_rhs[] = {identifier_t};
-    productions[14] = create_production(f_nt, p14_rhs, 1, 14, semantic_action_id);
-
-    // P15: F -> INTEGER (Using INTEGER for number literals)
-    GrammarSymbol* p15_rhs[] = {integer_t};
-    productions[15] = create_production(f_nt, p15_rhs, 1, 15, semantic_action_number);
-
-    // P16: F -> LPAREN E RPAREN
-    GrammarSymbol* p16_rhs[] = {lparen_t, e_nt, rparen_t};
-    productions[16] = create_production(f_nt, p16_rhs, 3, 16, semantic_action_paren_expr);
-
-    // P17: WriteStatement -> WRITE E
-    GrammarSymbol* p17_rhs[] = {write_t, e_nt};
-    productions[17] = create_production(write_stmt_nt, p17_rhs, 2, 17, semantic_action_write_statement);
-
-    // P18: LoopStatement -> REPEAT E TIMES CodeBlock
-    GrammarSymbol* p18_rhs[] = {repeat_t, e_nt, times_t, code_block_nt};
-    productions[18] = create_production(loop_stmt_nt, p18_rhs, 4, 18, semantic_action_loop_statement);
-
-    // P19: CodeBlock -> LBRACE StatementList RBRACE
-    GrammarSymbol* p19_rhs[] = {lbrace_t, stmt_list_nt, rbrace_t};
-    productions[19] = create_production(code_block_nt, p19_rhs, 3, 19, semantic_action_passthrough); // Semantic action will create code_block node
-
-    // P20: F -> STRING (Added for string literals)
-    GrammarSymbol* p20_rhs[] = {string_t};
-    productions[20] = create_production(f_nt, p20_rhs, 1, 20, semantic_action_string);
+// R21: <list_element> -> newline
+GrammarSymbol* list_elem_newline_rhs[] = {all_terminals_map[TOKEN_NEWLINE]};
+productions_array[prod_idx] = create_production(list_element_nt, list_elem_newline_rhs, 1, prod_idx, semantic_action_list_element); prod_idx++;
 
 
     Grammar grammar = {
-        .productions = productions,
-        .production_count = sizeof(productions) / sizeof(productions[0]),
-        .terminals = terminals,
-        .terminal_count = terminal_count,
-        .non_terminals = non_terminals,
-        .non_terminal_count = non_terminal_count,
+        .productions = productions_array, // Assign the pointer to the local array
+        .production_count = prod_idx, // Use the actual count of added productions
+        .terminals = all_terminals_map, // Assign the pointer to the dynamically allocated array
+        .terminal_count = true_terminal_count, // Set the count to TOKEN_ERROR + 1
+        .non_terminals = all_non_terminals_map, // Assign the pointer to the dynamically allocated array
+        .non_terminal_count = true_non_terminal_count, // Set the count to NUM_NON_TERMINALS_DEFINED
         .start_symbol = s_prime // S' is the augmented start symbol
     };
 
     // --- Test Input ---
-	char *input_filename = argv[1]; // NAME OF THE CODE FILE
-	FILE *inputFile = fopen(input_filename, "r");
+    char *input_filename = argv[1];
+    FILE *inputFile = fopen(input_filename, "r");
     if (!inputFile) {
         fprintf(stderr, "Error: Could not open input file '%s'\n", input_filename);
-        // Free dynamically allocated grammar symbols before exiting
-        free_grammar_data(&grammar);
+        free_grammar_data(&grammar); // Free any grammar data already allocated
         return EXIT_FAILURE;
     }
 
-    int num_test_tokens = 0; // Initialize to 0
-    // Pass the address of num_test_tokens to lexer to get the actual count
+    int num_test_tokens = 0;
     Token* tokens = lexer(inputFile, input_filename, &num_test_tokens);
-    fclose(inputFile); // Close the input file after lexing
+    fclose(inputFile);
 
-    if (!tokens) {
-        fprintf(stderr, "Lexical analysis failed or no tokens generated.\n");
-        // Free dynamically allocated grammar symbols before exiting
+    if (!tokens || (num_test_tokens > 0 && tokens[num_test_tokens - 1].type == TOKEN_ERROR)) {
+        fprintf(stderr, "Lexical analysis failed or encountered errors. Aborting parsing.\n");
+        if (tokens) free(tokens); // Free tokens even if an error occurred during lexing
+        free_grammar_data(&grammar); // Free any grammar data already allocated
+        return EXIT_FAILURE;
+    }
+    if (num_test_tokens == 0) {
+        fprintf(stderr, "Lexer returned no tokens. Aborting parsing.\n");
         free_grammar_data(&grammar);
         return EXIT_FAILURE;
     }
 
-    // Now, num_test_tokens holds the actual number of tokens
+
     printf("Total tokens lexed: %d\n", num_test_tokens);
-    fflush(stdout);
 
     // --- 4. Compute FIRST and FOLLOW Sets ---
     printf("Computing FIRST and FOLLOW sets...\n");
-    fflush(stdout);
     compute_nullable_set(&grammar, nullable_status);
     compute_first_sets(&grammar);
     compute_follow_sets(&grammar);
     printf("FIRST and FOLLOW sets computed.\n");
-    fflush(stdout);
 
     // --- 5. Generate LR(1) Item Sets (Canonical Collection) ---
     printf("Generating LR(1) item sets...\n");
-    fflush(stdout);
     create_lr1_sets(&grammar);
     printf("LR(1) item sets generated. Total states: %d\n", canonical_collection.count);
-    fflush(stdout);
 
     // --- 6. Build Parsing Tables ---
     printf("Building parsing tables...\n");
-    fflush(stdout);
+    // Pass pointer to global canonical_collection
     build_parsing_tables(&grammar, &canonical_collection, nullable_status);
     printf("Parsing tables built.\n");
-    fflush(stdout);
 
     // --- 7. Perform Parsing ---
     printf("\nAttempting to parse sample tokens...\n");
-    fflush(stdout);
     ASTNode* root_ast = parse(&grammar, tokens, num_test_tokens);
 
     // --- 8. Inspect AST ---
     if (root_ast) {
         printf("\n--- Parsing Successful! Generated AST: ---\n");
         print_ast_node(root_ast, 0);
+        // At this point, `root_ast` is the root of your Abstract Syntax Tree.
+        // You can now traverse this AST to perform interpretation or code generation.
         free_ast_node(root_ast); // Free the entire AST
     } else {
         fprintf(stderr, "\n--- Parsing Failed! ---\n");
@@ -322,13 +381,13 @@ int main(int argc, char *argv[]) {
 
     // --- 9. Cleanup ---
     printf("\nCleaning up...\n");
-    fflush(stdout);
 
     free(tokens); // Free the tokens array allocated by lexer
 
     free_parsing_tables(); // Free action and goto tables
-    free_canonical_collection(&canonical_collection); // Free LR(1) item sets
-    free_grammar_data(&grammar); // Free grammar symbols and production RHS arrays
+    // canonical_collection is a global struct, its internal fixed-size arrays don't need explicit free.
+    // However, if any element within ItemSet was dynamically allocated, that would need a separate free.
+    free_grammar_data(&grammar); // Free grammar symbols and production RHS arrays and their containers
 
     return 0;
 }
