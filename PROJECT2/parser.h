@@ -1,108 +1,164 @@
 #ifndef PARSER_H
 #define PARSER_H
 
-#include "lexer.h"
+#include "lexer.h" // For TokenType and Token struct
 #include <stdbool.h>
+#include <stdlib.h> // For size_t
 
-#define MAX_TERMINALS 200
-#define MAX_NON_TERMINALS 200
+// Forward declarations for AST nodes
+struct ASTNode;
+typedef struct ASTNode ASTNode;
 
-// Bitmask for sets of terminals (e.g., FIRST, FOLLOW sets)
-typedef unsigned char TerminalSet[MAX_TERMINALS / 8 + (MAX_TERMINALS % 8 != 0)];
+// Maximum number of grammar productions (adjust as needed for your grammar)
+#define MAX_PRODUCTIONS 50
+// Maximum number of non-terminals (adjust based on your grammar)
+#define MAX_NON_TERMINALS 30
+// Maximum number of LR(1) states/item sets
+#define MAX_STATES 500 // Can grow quite large for complex grammars
+// Maximum number of symbols (terminals + non-terminals)
+// Ensure this is large enough to cover all TokenType values plus all NonTerminalType values
+#define MAX_SYMBOLS_TOTAL (TOKEN_ERROR + 1 + NUM_NON_TERMINALS_DEFINED) // Max terminal ID + 1, plus max non-terminal ID
 
-// External declarations for global variables used across parser files
-extern TerminalSet firstSetsForNonTerminals[MAX_NON_TERMINALS];
-extern TerminalSet followSetsForNonTerminals[MAX_NON_TERMINALS];
-extern bool nullable_status[MAX_NON_TERMINALS];
-
-extern int** goto_table;           // LR parsing GOTO table
-extern int num_states;             // Total number of states in the LR automaton
-
-
-// Unary operators supported in the language
+// Enumeration for Non-Terminal IDs
+// Start from a value higher than any TokenType to avoid clashes
 typedef enum {
-    UNOP_INCREMENT,
-    UNOP_DECREMENT
-} UnaryOperator;
-
-// Binary operators supported in the language
-typedef enum {
-    BINOP_ADD,
-    BINOP_SUBTRACT, // Added for consistency with arithmetic expressions
-    BINOP_MULTIPLY,
-    BINOP_ASSIGN,
-    BINOP_PLUS_ASSIGN,
-    BINOP_MINUS_ASSIGN
-} BinaryOperator;
-
-// Types of Abstract Syntax Tree (AST) nodes
-typedef enum {
-    AST_PROGRAM,
-    AST_STATEMENT_LIST,
-    AST_ASSIGNMENT,
-    // AST_INCREMENT, // Removed if not directly used as a top-level AST node
-    // AST_DECREMENT, // Removed if not directly used as a top-level AST node
-    AST_WRITE_STATEMENT,
-    AST_LOOP_STATEMENT,
-    AST_CODE_BLOCK,
-    AST_BINARY_OP,
-    AST_UNARY_OP,
-    AST_IDENTIFIER,
-    AST_NUMBER,
-    AST_STRING,
-    // AST_OUTPUT_LIST, // Removed if simplified
-    // AST_LIST_ELEMENT // Removed if simplified
-} ASTNodeType;
-
-// Enumeration for Grammar Symbol IDs (Terminals and Non-terminals)
-enum SymbolIDs {
-    // Non-terminals (start from 0)
-    NT_PROGRAM = 0,
+    NT_PROGRAM = 1000, // Make sure these don't overlap with TOKEN_ enums
+    NT_S_PRIME,        // Augmented start symbol S' -> Program EOF
     NT_STATEMENT_LIST,
     NT_STATEMENT,
-    // NT_DECLARATION, // Removed if not used in grammar
+    NT_DECLARATION,
     NT_ASSIGNMENT,
-    // NT_INCREMENT_STMT, // Specific non-terminal for increment statement
-    // NT_DECREMENT_STMT, // Specific non-terminal for decrement statement
+    NT_INCREMENT,
+    NT_DECREMENT,
     NT_WRITE_STATEMENT,
+    NT_OUTPUT_LIST,
+    NT_LIST_ELEMENT,
     NT_LOOP_STATEMENT,
     NT_CODE_BLOCK,
-    // NT_OUTPUT_LIST, // Removed if simplified
-    // NT_LIST_ELEMENT, // Removed if simplified
-    NT_E, // Expression
-    NT_T, // Term
-    NT_F, // Factor
-    NT_S_PRIME, // Augmented start symbol for LR parsing
+    NT_INT_VALUE, // NEW: Non-terminal for integer values (constants or variables)
+    NUM_NON_TERMINALS_DEFINED // Keep this as the last entry, indicates total defined non-terminals
+} NonTerminalType;
 
-    // Terminals (start from a higher value to avoid conflict with non-terminals)
-    T_SEMICOLON = 100,
-    T_INTEGER,      // Corresponds to TOKEN_INTEGER from lexer
-    T_WRITE,
-    T_REPEAT,
-    T_AND,
-    T_TIMES,
-    T_NEWLINE,
-    T_IDENTIFIER,   // Corresponds to TOKEN_IDENTIFIER from lexer
-    T_STRING,       // Corresponds to TOKEN_STRING from lexer
-    T_ASSIGN,       // Corresponds to TOKEN_ASSIGN from lexer
-    T_PLUS_ASSIGN,  // Corresponds to TOKEN_PLUS_ASSIGN from lexer
-    T_MINUS_ASSIGN, // Corresponds to TOKEN_MINUS_ASSIGN from lexer
-    T_LBRACE,       // Corresponds to TOKEN_OPENB from lexer
-    T_RBRACE,       // Corresponds to TOKEN_CLOSEB from lexer
-    T_PLUS,         // Corresponds to TOKEN_PLUS from lexer
-    T_STAR,         // Corresponds to TOKEN_STAR from lexer
-    T_LPAREN,       // Corresponds to TOKEN_LPAREN from lexer
-    T_RPAREN,       // Corresponds to TOKEN_RPAREN from lexer
-    T_EOF = 199     // End of File marker, highest terminal ID
-};
 
-// Type of grammar symbol (terminal or non-terminal)
+// Structure for a grammar symbol (terminal or non-terminal)
 typedef enum {
     SYMBOL_TERMINAL,
     SYMBOL_NONTERMINAL
 } SymbolType;
 
-// Action types for the LR parsing table
+typedef struct GrammarSymbol {
+    SymbolType type;
+    int id;           // TokenType for terminals, NonTerminalType for non-terminals
+    char* name;       // String representation of the symbol (e.g., "ID", "Program")
+} GrammarSymbol;
+
+// Abstract Syntax Tree (AST) Node Types
+typedef enum {
+    AST_PROGRAM,
+    AST_STATEMENT_LIST,
+    AST_DECLARATION,
+    AST_ASSIGNMENT,
+    AST_INCREMENT,
+    AST_DECREMENT,
+    AST_WRITE_STATEMENT,
+    AST_OUTPUT_LIST,
+    AST_LIST_ELEMENT,
+    AST_LOOP_STATEMENT,
+    AST_CODE_BLOCK,
+    AST_IDENTIFIER,
+    AST_INTEGER_LITERAL,
+    AST_STRING_LITERAL,
+    AST_NEWLINE,
+    AST_INT_VALUE, // NEW: AST node for expressions (representing integer or identifier value)
+    AST_KEYWORD,   // NEW: Generic keyword/punctuation node for AST
+    AST_ERROR
+} ASTNodeType;
+
+// Structure for an AST Node
+struct ASTNode {
+    ASTNodeType type;
+    SourceLocation location; // Location from the token that formed this node
+
+    // Generic child nodes for compound structures
+    ASTNode** children;
+    int num_children;
+    int children_capacity;
+
+    // Specific data for different node types
+    union {
+        // For AST_IDENTIFIER
+        struct {
+            char* name; // Identifier name (e.g., "myVar")
+            int symbol_table_index; // Index in the symbol table, if applicable
+        } identifier;
+
+        // For AST_INTEGER_LITERAL
+        long long int_value;
+
+        // For AST_STRING_LITERAL
+        char* string_value;
+
+        // For AST_LOOP_STATEMENT (e.g., repeat N times { ... })
+        struct {
+            ASTNode* count_expr; // The N in 'repeat N times' (should be integer literal or identifier)
+            ASTNode* body;       // The statement or code block to repeat
+        } loop;
+
+        // For AST_KEYWORD (optional: store keyword lexeme if needed for debugging/display)
+        char* keyword_lexeme; // Store the actual keyword string (e.g., "write", ";")
+
+        // Add more unions for other node-specific data
+    } data;
+};
+
+// Function pointer for semantic actions
+typedef ASTNode* (*SemanticAction)(ASTNode** children);
+
+// Structure for a production rule
+typedef struct Production {
+    GrammarSymbol* left_symbol;
+    GrammarSymbol** right_symbols; // Pointers to grammar symbols on the RHS
+    int right_count;
+    int production_id; // Unique ID for this production (0-indexed)
+    SemanticAction semantic_action; // Pointer to the semantic action function
+} Production;
+
+// Structure for the entire grammar
+typedef struct Grammar {
+    Production* productions;      // Pointer to an array of productions
+    int production_count;
+    GrammarSymbol** terminals;    // Pointer to an array of terminal symbols (indexed by TokenType)
+    int terminal_count;           // Represents max_token_type_id + 1
+    GrammarSymbol** non_terminals; // Pointer to an array of non-terminal symbols (indexed by NonTerminalType)
+    int non_terminal_count;       // Represents max_non_terminal_type_id + 1
+    GrammarSymbol* start_symbol; // Augmented start symbol (S')
+} Grammar;
+
+
+// Bitset for terminals (for FIRST/FOLLOW sets)
+typedef unsigned long long TerminalSet; // Enough for up to 64 terminals
+
+// LR(1) Item structure
+typedef struct Item {
+    int production_idx; // Index of the production rule (e.g., A -> alpha . beta, production_idx is for A -> alpha beta)
+    int dot_pos;        // Position of the dot in the right-hand side (0-indexed)
+    TokenType lookahead; // The lookahead terminal for LR(1)
+} Item;
+
+// LR(1) Item Set structure
+typedef struct ItemSet {
+    Item items[MAX_PRODUCTIONS * 4]; // Increased heuristic for max items in a set
+    int count;
+    int id; // Unique ID for this item set (state number)
+} ItemSet;
+
+// List of all LR(1) Item Sets (Canonical Collection)
+typedef struct ItemSetList {
+    ItemSet sets[MAX_STATES];
+    int count;
+} ItemSetList;
+
+// Parsing table action types
 typedef enum {
     ACTION_SHIFT,
     ACTION_REDUCE,
@@ -110,171 +166,60 @@ typedef enum {
     ACTION_ERROR
 } ActionType;
 
-// Entry structure for the LR parsing action table
-typedef struct {
+// Parsing table entry
+typedef struct ActionEntry {
     ActionType type;
-    int target_state_or_production_id; // For SHIFT: target state, for REDUCE: production ID
+    int target_state_or_production_id; // State for SHIFT, Production ID for REDUCE
 } ActionEntry;
-extern ActionEntry** action_table; // LR parsing action table
 
-// Structure to represent a grammar symbol (terminal or non-terminal)
-typedef struct {
-    SymbolType type;
-    int id;   // Unique ID from SymbolIDs enum
-    char* name; // String representation of the symbol
-} GrammarSymbol;
 
-// Abstract Syntax Tree (AST) Node Structure
-typedef struct ASTNode {
-    ASTNodeType type;
-    union {
-        struct {
-            BinaryOperator operator;
-            struct ASTNode* left;
-            struct ASTNode* right;
-        } binary_op;
+// --- Global Variables (Declared in parser.c, externed here) ---
+// These are now declared as global variables to be accessed across files
+extern TerminalSet firstSetsForNonTerminals[NUM_NON_TERMINALS_DEFINED]; // Corrected array size
+extern TerminalSet followSetsForNonTerminals[NUM_NON_TERMINALS_DEFINED]; // Corrected array size
+extern ActionEntry** action_table; // [state][terminal_id]
+extern int** goto_table;           // [state][non_terminal_id]
+extern int num_states;
+extern bool nullable_status[NUM_NON_TERMINALS_DEFINED]; // Corrected array size
+extern ItemSetList canonical_collection; // Global canonical collection
 
-        struct {
-            UnaryOperator operator;
-            struct ASTNode* operand;
-        } unary_op;
 
-        struct {
-            char* name;
-        } identifier;
+// --- Function Declarations for Parser ---
 
-        struct {
-            long long value; // Changed to long long to match lexer's int_value
-        } number;
-
-        struct {
-            char* value;
-        } string;
-
-        struct {
-            struct ASTNode* target; // Identifier node
-            struct ASTNode* value;  // Expression node
-        } assignment;
-
-        struct {
-            struct ASTNode* expression; // The expression to be written
-        } write_stmt;
-
-        struct {
-            struct ASTNode* count; // Expression for loop count
-            struct ASTNode* body;  // Code block for loop body
-        } loop_stmt;
-
-        struct {
-            struct ASTNode** statements;
-            int statement_count;
-        } statement_list;
-
-        struct {
-            struct ASTNode* statement_list;
-        } program;
-
-        struct {
-            struct ASTNode** statements; // Array of statements in the block
-            int statement_count;
-        } code_block;
-
-    } data;
-
-    // Common fields for all AST nodes
-    struct ASTNode** children; // Array of pointers to child AST nodes
-    int child_count;           // Number of children
-    SourceLocation location;   // Source code location of the node
-} ASTNode;
-
-// Structure to represent a grammar production rule
-typedef struct Production {
-    GrammarSymbol* left_symbol;
-    GrammarSymbol** right_symbols;
-    int right_count;
-    int production_id;
-    // Pointer to the semantic action function for this production
-    ASTNode* (*semantic_action)(ASTNode** children);
-} Production;
-
-// Structure to represent the entire grammar
-typedef struct Grammar {
-    Production *productions;
-    int production_count;
-    GrammarSymbol** terminals;
-    int terminal_count;
-    GrammarSymbol** non_terminals;
-    int non_terminal_count;
-    GrammarSymbol* start_symbol; // The augmented start symbol (S')
-} Grammar;
-
-// Structure for an LR(1) item
-typedef struct LRItem {
-    int production_id;
-    int dot_position;
-    TerminalSet lookahead_set; // Set of terminals that can follow this item
-} LRItem;
-
-// Structure for a set of LR(1) items (a state in the LR automaton)
-typedef struct ItemSet {
-    LRItem* items;
-    int item_count;
-    int state_id; // Unique ID for this item set (state)
-    int capacity; // Current capacity of the items array
-} ItemSet;
-
-// Structure for a list of ItemSets (the canonical collection)
-typedef struct ItemSetList {
-    ItemSet** sets;
-    int count;
-    int capacity;
-} ItemSetList;
-extern ItemSetList canonical_collection; // Canonical collection of LR(1) item sets
-
-// --- AST Node Creation Function Prototypes ---
-ASTNode* create_ast_node(ASTNodeType type, SourceLocation location); // General creation helper
-ASTNode* create_program_node(ASTNode* statement_list, SourceLocation location);
-ASTNode* create_statement_list_node(ASTNode** statements, int count, SourceLocation location);
-ASTNode* create_assignment_node(ASTNode* target, ASTNode* value, SourceLocation location);
-ASTNode* create_write_statement_node(ASTNode* expression, SourceLocation location); // Changed to expression
-ASTNode* create_loop_statement_node(ASTNode* count, ASTNode* body, SourceLocation location);
-ASTNode* create_code_block_node(ASTNode* statement_list, SourceLocation location);
-ASTNode* create_binary_op_node(BinaryOperator op_type, ASTNode* left, ASTNode* right, SourceLocation location);
-ASTNode* create_unary_op_node(UnaryOperator op_type, ASTNode* operand, SourceLocation location);
-ASTNode* create_identifier_node(const char* name, SourceLocation location);
-ASTNode* create_number_node(long long value, SourceLocation location); // Changed value type
-ASTNode* create_string_node(const char* value, SourceLocation location);
-
-// --- Parser Utility Function Prototypes ---
-void compute_nullable_set(Grammar* grammar, bool* nullable);
-void compute_first_sets(Grammar* grammar);
-void compute_follow_sets(Grammar* grammar);
-void create_lr1_sets(Grammar* grammar);
-void build_parsing_tables(Grammar* grammar, ItemSetList* canonical_collection, bool* nullable_status);
-ASTNode* parse(Grammar* grammar, Token* tokens, int num_tokens);
-void print_ast_node(ASTNode* node, int depth);
+// AST Node Creation and Management
+ASTNode* create_ast_node(ASTNodeType type, SourceLocation loc);
+void add_child_to_ast_node(ASTNode* parent, ASTNode* child);
+ASTNode* create_ast_leaf_from_token(const Token* token);
+void print_ast_node(const ASTNode* node, int indent);
 void free_ast_node(ASTNode* node);
-void free_parsing_tables();
-void free_canonical_collection(ItemSetList* list);
-void item_set_free(ItemSet* set); // Frees items within an ItemSet
 
-// --- Semantic Action Function Prototypes ---
-// These functions build AST nodes from parsed grammar productions
+// Semantic Action Functions (forward declarations)
 ASTNode* semantic_action_passthrough(ASTNode** children);
 ASTNode* semantic_action_program(ASTNode** children);
-ASTNode* semantic_action_statement_list_single(ASTNode** children);
 ASTNode* semantic_action_statement_list_multi(ASTNode** children);
-ASTNode* semantic_action_id(ASTNode** children);
-ASTNode* semantic_action_number(ASTNode** children);
-ASTNode* semantic_action_string(ASTNode** children);
-ASTNode* semantic_action_paren_expr(ASTNode** children);
+ASTNode* semantic_action_statement_list_single(ASTNode** children);
+ASTNode* semantic_action_statement_with_semicolon(ASTNode** children);
+ASTNode* semantic_action_declaration(ASTNode** children);
 ASTNode* semantic_action_assignment(ASTNode** children);
-ASTNode* semantic_action_plus_assign(ASTNode** children);
-ASTNode* semantic_action_minus_assign(ASTNode** children);
+ASTNode* semantic_action_increment(ASTNode** children);
+ASTNode* semantic_action_decrement(ASTNode** children);
 ASTNode* semantic_action_write_statement(ASTNode** children);
-ASTNode* semantic_action_loop_statement(ASTNode** children);
-ASTNode* semantic_action_binary_add(ASTNode** children);      // For E -> E + T
-ASTNode* semantic_action_binary_multiply(ASTNode** children); // For T -> T * F
+ASTNode* semantic_action_output_list_multi(ASTNode** children);
+ASTNode* semantic_action_output_list_single(ASTNode** children);
+ASTNode* semantic_action_list_element(ASTNode** children);
+ASTNode* semantic_action_loop_statement_single(ASTNode** children);
+ASTNode* semantic_action_loop_statement_block(ASTNode** children);
+ASTNode* semantic_action_code_block(ASTNode** children);
+ASTNode* semantic_action_int_value_from_integer(ASTNode** children); // NEW
+ASTNode* semantic_action_int_value_from_identifier(ASTNode** children); // NEW
+
+// Core Parser Functions
+void compute_nullable_set(const Grammar* grammar, bool nullable[NUM_NON_TERMINALS_DEFINED]);
+void compute_first_sets(const Grammar* grammar);
+void compute_follow_sets(const Grammar* grammar);
+void create_lr1_sets(const Grammar* grammar);
+void build_parsing_tables(const Grammar* grammar, const ItemSetList* canonical_collection_ptr, bool nullable[NUM_NON_TERMINALS_DEFINED]);
+ASTNode* parse(const Grammar* grammar, Token* tokens, int num_tokens);
+void free_parsing_tables();
 
 #endif // PARSER_H
-
