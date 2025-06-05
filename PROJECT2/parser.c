@@ -162,7 +162,7 @@ void add_child_to_ast_node(ASTNode* parent, ASTNode* child) {
     parent->children[parent->num_children++] = child;
 }
 
-// Creates a leaf node (identifier, integer, string, newline) directly from a token
+// Creates a leaf node (identifier, integer, string, newline, keyword) directly from a token
 ASTNode* create_ast_leaf_from_token(const Token* token) {
     ASTNode* node = NULL;
     if (!token) return NULL;
@@ -171,7 +171,7 @@ ASTNode* create_ast_leaf_from_token(const Token* token) {
         case TOKEN_IDENTIFIER:
             node = create_ast_node(AST_IDENTIFIER, token->location);
             node->data.identifier.name = strdup(token->lexeme);
-            node->data.identifier.symbol_table_index = token->value.symbol_index;
+            node->data.identifier.symbol_table_index = token->value.symbol_index; // Assuming this is set by lexer/symbol table
             break;
         case TOKEN_INTEGER:
             node = create_ast_node(AST_INTEGER_LITERAL, token->location);
@@ -180,22 +180,38 @@ ASTNode* create_ast_leaf_from_token(const Token* token) {
         case TOKEN_STRING:
             node = create_ast_node(AST_STRING_LITERAL, token->location);
             // Copy string content without quotes
-            // Check for minimum length to avoid issues with empty strings or just quotes
             if (strlen(token->lexeme) >= 2) {
                 node->data.string_value = strndup(token->lexeme + 1, strlen(token->lexeme) - 2);
             } else {
                 node->data.string_value = strdup(""); // Empty string if invalid
             }
             break;
-        case TOKEN_NEWLINE:
+        case TOKEN_NEWLINE: // Keep NEWLINE separate as it's a specific output action
             node = create_ast_node(AST_NEWLINE, token->location);
             break;
+        // For other terminals which are keywords/punctuation that we might want to represent in AST for location/debugging
+        case TOKEN_NUMBER:
+        case TOKEN_WRITE:
+        case TOKEN_REPEAT:
+        case TOKEN_AND:
+        case TOKEN_TIMES:
+        case TOKEN_ASSIGN:
+        case TOKEN_PLUS_ASSIGN:
+        case TOKEN_MINUS_ASSIGN:
+        case TOKEN_OPENB:
+        case TOKEN_CLOSEB:
+        case TOKEN_EOL:
+        case TOKEN_PLUS:
+        case TOKEN_STAR:
+        case TOKEN_LPAREN:
+        case TOKEN_RPAREN:
+        case TOKEN_EOF:
+            node = create_ast_node(AST_KEYWORD, token->location);
+            node->data.keyword_lexeme = strdup(token->lexeme); // Store the actual keyword string
+            break;
+        case TOKEN_ERROR:
         default:
-            // For other terminals like ';', '{', '}', etc., a dedicated leaf node
-            // might not be necessary, or they can be represented as generic tokens.
-            // For now, return NULL for unhandled types unless specifically needed in AST.
-            // The parser will still process them; semantic actions will decide their AST representation.
-            return NULL;
+            return NULL; // Should ideally not be reached if lexer is robust
     }
     return node;
 }
@@ -226,6 +242,8 @@ void print_ast_node(const ASTNode* node, int indent) {
         case AST_INTEGER_LITERAL: printf("Integer: %lld\n", node->data.int_value); break;
         case AST_STRING_LITERAL: printf("String: \"%s\"\n", node->data.string_value); break;
         case AST_NEWLINE: printf("Newline\n"); break;
+        case AST_INT_VALUE: printf("Int_Value\n"); break; // NEW
+        case AST_KEYWORD: printf("Keyword: %s\n", node->data.keyword_lexeme); break; // NEW
         case AST_ERROR: printf("ERROR_NODE\n"); break;
         default: printf("UNKNOWN_AST_NODE_TYPE (%d)\n", node->type); break;
     }
@@ -258,6 +276,11 @@ void free_ast_node(ASTNode* node) {
         case AST_STRING_LITERAL:
             if (node->data.string_value) {
                 free(node->data.string_value);
+            }
+            break;
+        case AST_KEYWORD:
+            if (node->data.keyword_lexeme) {
+                free(node->data.keyword_lexeme);
             }
             break;
         default:
@@ -319,67 +342,69 @@ ASTNode* semantic_action_statement_with_semicolon(ASTNode** children) {
 // R9: <declaration> -> number IDENTIFIER
 ASTNode* semantic_action_declaration(ASTNode** children) {
     // children[0] is 'number' (keyword), children[1] is IDENTIFIER
-    ASTNode* declaration_node = create_ast_node(AST_DECLARATION, children[1]->location); // Location of IDENTIFIER
+    // Get location from the IDENTIFIER as 'number' is just a keyword.
+    ASTNode* declaration_node = create_ast_node(AST_DECLARATION, children[1]->location);
     add_child_to_ast_node(declaration_node, children[1]); // IDENTIFIER node
     return declaration_node;
 }
 
-// R10: <assignment> -> IDENTIFIER := INTEGER
+// R10: <assignment> -> IDENTIFIER := <int_value>
 ASTNode* semantic_action_assignment(ASTNode** children) {
-    // children[0] is IDENTIFIER, children[1] is ':=', children[2] is INTEGER
+    // children[0] is IDENTIFIER, children[1] is ':=', children[2] is <int_value>
     ASTNode* assignment_node = create_ast_node(AST_ASSIGNMENT, children[0]->location); // Location of IDENTIFIER
     add_child_to_ast_node(assignment_node, children[0]); // IDENTIFIER node (lhs)
-    add_child_to_ast_node(assignment_node, children[2]); // INTEGER literal node (rhs)
+    add_child_to_ast_node(assignment_node, children[2]); // <int_value> node (rhs)
     return assignment_node;
 }
 
-// R11: <decrement> -> IDENTIFIER -= INTEGER
+// R11: <decrement> -> IDENTIFIER -= <int_value>
 ASTNode* semantic_action_decrement(ASTNode** children) {
-    // children[0] is IDENTIFIER, children[1] is '-=', children[2] is INTEGER
+    // children[0] is IDENTIFIER, children[1] is '-=', children[2] is <int_value>
     ASTNode* decrement_node = create_ast_node(AST_DECREMENT, children[0]->location);
     add_child_to_ast_node(decrement_node, children[0]); // IDENTIFIER node
-    add_child_to_ast_node(decrement_node, children[2]); // INTEGER literal node
+    add_child_to_ast_node(decrement_node, children[2]); // <int_value> node
     return decrement_node;
 }
 
-// R12: <increment> -> IDENTIFIER += INTEGER
+// R12: <increment> -> IDENTIFIER += <int_value>
 ASTNode* semantic_action_increment(ASTNode** children) {
-    // children[0] is IDENTIFIER, children[1] is '+=', children[2] is INTEGER
+    // children[0] is IDENTIFIER, children[1] is '+=', children[2] is <int_value>
     ASTNode* increment_node = create_ast_node(AST_INCREMENT, children[0]->location);
     add_child_to_ast_node(increment_node, children[0]); // IDENTIFIER node
-    add_child_to_ast_node(increment_node, children[2]); // INTEGER literal node
+    add_child_to_ast_node(increment_node, children[2]); // <int_value> node
     return increment_node;
 }
 
 // R13: <write_statement> -> write <output_list>
 ASTNode* semantic_action_write_statement(ASTNode** children) {
-    // children[0] is 'write' keyword, children[1] is OutputList
-    ASTNode* write_node = create_ast_node(AST_WRITE_STATEMENT, children[0]->location); // Location of 'write' keyword
+    // children[0] is 'write' keyword (now an AST_KEYWORD node), children[1] is OutputList
+    // Use location from the 'write' keyword node
+    ASTNode* write_node = create_ast_node(AST_WRITE_STATEMENT, children[0]->location);
     add_child_to_ast_node(write_node, children[1]); // OutputList node
     return write_node;
 }
 
-// R14: <loop_statement> -> repeat INTEGER times <statement>
+// R14: <loop_statement> -> repeat <int_value> times <statement>
 ASTNode* semantic_action_loop_statement_single(ASTNode** children) {
-    // children[0] is 'repeat', children[1] is INTEGER, children[2] is 'times', children[3] is Statement
+    // children[0] is 'repeat' (AST_KEYWORD), children[1] is <int_value>, children[2] is 'times' (AST_KEYWORD), children[3] is Statement
     ASTNode* loop_node = create_ast_node(AST_LOOP_STATEMENT, children[0]->location); // Location of 'repeat'
-    loop_node->data.loop.count_expr = children[1]; // INTEGER node
+    loop_node->data.loop.count_expr = children[1]; // <int_value> node
     loop_node->data.loop.body = children[3];       // Statement node
     return loop_node;
 }
 
-// R15: <loop_statement> -> repeat INTEGER times <code_block>
+// R15: <loop_statement> -> repeat <int_value> times <code_block>
 ASTNode* semantic_action_loop_statement_block(ASTNode** children) {
-    // children[0] is 'repeat', children[1] is INTEGER, children[2] is 'times', children[3] is CodeBlock
+    // children[0] is 'repeat' (AST_KEYWORD), children[1] is <int_value>, children[2] is 'times' (AST_KEYWORD), children[3] is CodeBlock
     ASTNode* loop_node = create_ast_node(AST_LOOP_STATEMENT, children[0]->location); // Location of 'repeat'
-    loop_node->data.loop.count_expr = children[1]; // INTEGER node
+    loop_node->data.loop.count_expr = children[1]; // <int_value> node
     loop_node->data.loop.body = children[3];       // CodeBlock node
     return loop_node;
 }
 
 // R16: <code_block> -> { <statement_list> }
 ASTNode* semantic_action_code_block(ASTNode** children) {
-    // children[0] is '{', children[1] is StatementList, children[2] is '}'
+    // children[0] is '{' (AST_KEYWORD), children[1] is StatementList, children[2] is '}' (AST_KEYWORD)
     ASTNode* code_block_node = create_ast_node(AST_CODE_BLOCK, children[0]->location); // Location of '{'
     add_child_to_ast_node(code_block_node, children[1]); // StatementList node
     return code_block_node;
@@ -387,9 +412,9 @@ ASTNode* semantic_action_code_block(ASTNode** children) {
 
 // R17: <output_list> -> <output_list> and <list_element>
 ASTNode* semantic_action_output_list_multi(ASTNode** children) {
-    // children[0] is existing OutputList, children[1] is 'and', children[2] is new ListElement
+    // children[0] is existing OutputList, children[1] is 'and' (AST_KEYWORD), children[2] is new ListElement
     ASTNode* output_list = children[0];    // Existing OutputList
-    ASTNode* list_element = children[2]; // New ListElement (skip 'and')
+    ASTNode* list_element = children[2]; // New ListElement (skip 'and' keyword AST node)
 
     add_child_to_ast_node(output_list, list_element);
     return output_list;
@@ -403,16 +428,34 @@ ASTNode* semantic_action_output_list_single(ASTNode** children) {
     return output_list;
 }
 
-// R19: <list_element> -> INTEGER
+// NEW: <int_value> -> INTEGER
+ASTNode* semantic_action_int_value_from_integer(ASTNode** children) {
+    // children[0] is AST_INTEGER_LITERAL
+    ASTNode* int_value_node = create_ast_node(AST_INT_VALUE, children[0]->location);
+    add_child_to_ast_node(int_value_node, children[0]); // Add the integer literal as a child
+    return int_value_node;
+}
+
+// NEW: <int_value> -> IDENTIFIER
+ASTNode* semantic_action_int_value_from_identifier(ASTNode** children) {
+    // children[0] is AST_IDENTIFIER
+    ASTNode* int_value_node = create_ast_node(AST_INT_VALUE, children[0]->location);
+    add_child_to_ast_node(int_value_node, children[0]); // Add the identifier as a child
+    return int_value_node;
+}
+
+
+// R19: <list_element> -> <int_value>
 // R20: <list_element> -> STRING
 // R21: <list_element> -> NEWLINE
 ASTNode* semantic_action_list_element(ASTNode** children) {
-    // The child is already an AST_INTEGER_LITERAL, AST_STRING_LITERAL, or AST_NEWLINE.
+    // The child can be AST_INT_VALUE, AST_STRING_LITERAL, or AST_NEWLINE.
     // We create a generic LIST_ELEMENT node and add the actual element as a child.
     ASTNode* list_element_node = create_ast_node(AST_LIST_ELEMENT, children[0]->location);
     add_child_to_ast_node(list_element_node, children[0]);
     return list_element_node;
 }
+
 
 // --- FIRST and FOLLOW Set Computation ---
 
@@ -820,9 +863,11 @@ void create_lr1_sets(const Grammar* grammar) {
 
         for (int j = 0; j < reachable_symbols_count; ++j) {
             const GrammarSymbol* X = reachable_symbols[j];
+            // Fix: Use &current_I instead of undeclared I
             ItemSet J = go_to(&current_I, X, grammar);
 
             if (J.count > 0) { // If GOTO(I, X) is not empty
+                // Fix: Use &canonical_collection instead of undeclared canonical_collection_ptr
                 int existing_J_idx = find_item_set(&canonical_collection, &J);
                 if (existing_J_idx == -1) {
                     // Add new item set to collection
