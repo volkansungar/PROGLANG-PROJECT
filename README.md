@@ -2,6 +2,7 @@
 Bilgisayar Mühendisliği 2. sınıf Programming Languages dersi projesi \
 Prototype kodu FSM kullanılmamış deneme/öğrenme amaçlı test kodudur.
 <h2>PROJECT2 LOOP STATEMENT DÜZENLENECEK</h2>
+<h2>LEXER HATALARI DÜZELTİCELEK</h2>
 
 # ~/.bashrc
 Usage: lexer <input_filename> <br />
