@@ -304,36 +304,88 @@ static void interpret_loop_statement(ASTNode* node) {
     ASTNode* count_expr_node = node->data.loop.count_expr;
     ASTNode* body_node = node->data.loop.body;
 
+    // Check if the count expression is a variable (identifier)
+    bool is_variable_count = false;
+    char* count_var_name = NULL;
+
+    if (count_expr_node->type == AST_INT_VALUE &&
+        count_expr_node->num_children == 1 &&
+        count_expr_node->children[0]->type == AST_IDENTIFIER) {
+        is_variable_count = true;
+        count_var_name = count_expr_node->children[0]->data.identifier.name;
+    }
+
     BigInt loop_count_big_int;
     evaluate_big_int_value(count_expr_node, &loop_count_big_int);
 
-    long long count_ll; // Convert to long long for loop iteration
-    if (!big_int_to_long_long(&loop_count_big_int, &count_ll)) {
-        fprintf(stderr, "Runtime Error: Loop count value is too large to fit in a standard integer type at line %d, column %d. Skipping loop.\n",
+    // Check for negative loop count
+    if (loop_count_big_int.sign == -1) {
+        fprintf(stderr, "Runtime Error: Loop count cannot be negative at line %d, column %d. Skipping loop.\n",
                 node->location.line, node->location.column);
-        return; // Cannot execute loop with an unmanageably large count
-    }
-    if (count_ll < 0) {
-        fprintf(stderr, "Runtime Error: Loop count cannot be negative (value: %lld) at line %d, column %d. Skipping loop.\n",
-                count_ll, node->location.line, node->location.column);
         return;
     }
 
+    BigInt zero;
+    big_int_zero(&zero);
 
-    printf("[DEBUG] Interpreting loop statement (count: %lld).\n", count_ll);
+    // If loop count is zero, skip the loop entirely
+    if (big_int_abs_compare(&loop_count_big_int, &zero) == 0) {
+        printf("[DEBUG] Interpreting loop statement (count: 0, skipping loop).\n");
+        return;
+    }
 
-    for (long long i = 0; i < count_ll; ++i) {
-        if (body_node->type == AST_STATEMENT) {
-            interpret_statement(body_node);
-        } else if (body_node->type == AST_CODE_BLOCK) {
-            interpret_code_block(body_node);
-        } else {
-            fprintf(stderr, "Interpreter Error: Invalid loop body type: %d\n", body_node->type);
-            break; // Exit loop on invalid body to prevent infinite errors
+    BigInt one;
+    big_int_from_long_long(&one, 1);
+
+    printf("[DEBUG] Interpreting loop statement (BigInt count: ");
+    big_int_print(&loop_count_big_int);
+    printf(").\n");
+
+    if (is_variable_count) {
+        // For variable-based loops: decrement the variable after each iteration
+        BigInt current_var_value;
+
+        while (lookup_runtime_symbol(&global_runtime_sym_table, count_var_name, &current_var_value) &&
+               big_int_abs_compare(&current_var_value, &zero) > 0) {
+
+            // Execute loop body
+            if (body_node->type == AST_STATEMENT) {
+                interpret_statement(body_node);
+            } else if (body_node->type == AST_CODE_BLOCK) {
+                interpret_code_block(body_node);
+            } else {
+                fprintf(stderr, "Interpreter Error: Invalid loop body type: %d\n", body_node->type);
+                break; // Exit loop on invalid body to prevent infinite errors
+            }
+
+            // Decrement the variable by 1
+            BigInt new_value;
+            big_int_sub(&new_value, &current_var_value, &one);
+            add_or_update_runtime_symbol(&global_runtime_sym_table, count_var_name, &new_value);
+
+            printf("[DEBUG] Decremented loop variable '%s' to ", count_var_name);
+            big_int_print(&new_value);
+            printf(".\n");
+        }
+    } else {
+        // For literal values: use traditional counter-based loop
+        BigInt current_iteration;
+        big_int_zero(&current_iteration);
+
+        // Loop as long as current_iteration < loop_count_big_int
+        while (big_int_abs_compare(&current_iteration, &loop_count_big_int) < 0) {
+            if (body_node->type == AST_STATEMENT) {
+                interpret_statement(body_node);
+            } else if (body_node->type == AST_CODE_BLOCK) {
+                interpret_code_block(body_node);
+            } else {
+                fprintf(stderr, "Interpreter Error: Invalid loop body type: %d\n", body_node->type);
+                break; // Exit loop on invalid body to prevent infinite errors
+            }
+            big_int_add(&current_iteration, &current_iteration, &one); // Increment counter
         }
     }
 }
-
 static void interpret_code_block(ASTNode* node) {
     if (!node || node->type != AST_CODE_BLOCK || node->num_children != 1 || node->children[0]->type != AST_STATEMENT_LIST) {
         fprintf(stderr, "Interpreter Error: Invalid AST_CODE_BLOCK node structure.\n");
