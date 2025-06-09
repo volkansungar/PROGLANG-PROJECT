@@ -1,6 +1,7 @@
 #ifndef LEXER_H
 #define LEXER_H
 #include <stdio.h>
+#include "bigint.h"
 
 // Maximum lexeme length
 #define MAX_LEXEME_LENGTH 256
@@ -36,13 +37,16 @@ typedef struct {
     const char* filename;
 } SourceLocation;
 
+
+
+
 // Token structure
 typedef struct {
     TokenType type;
     char lexeme[MAX_LEXEME_LENGTH];
     SourceLocation location;
     union {
-        long long int_value;
+        BigInt int_value;
         int symbol_index;
     } value;
 } Token;
@@ -54,6 +58,5 @@ void print_token(Token token);
 const char* token_type_str(TokenType type);
 // Function to free resources allocated by the lexer context
 void free_lex_context(void* ctx_ptr);
-
 #endif // LEXER_H
 

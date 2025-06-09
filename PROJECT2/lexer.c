@@ -143,7 +143,8 @@ const char* token_type_str(TokenType type) {
     }
 }
 
-// Prints a token's details to stdout
+
+// Corrected Code for lexer.c
 void print_token(Token token) {
     printf("%-12s %-16s  Line:%-4d Col:%-4d",
            token_type_str(token.type),
@@ -152,7 +153,8 @@ void print_token(Token token) {
            token.location.column);
 
     if (token.type == TOKEN_INTEGER) {
-        printf("  Value: %lld", token.value.int_value);
+        printf("  Value: ");
+		    big_int_print(&token.value.int_value); // Corrected line
     }
     printf("\n");
 }
@@ -591,7 +593,7 @@ static Token get_next_token(LexContext* ctx) {
             unget_char(ctx); // Current char belongs to the next token, put it back
             ctx->current_char = next_char(ctx); // Re-read for next iteration
             token.type = TOKEN_INTEGER;
-            token.value.int_value = atoll(ctx->lexeme_buffer); // Convert lexeme to long long
+            big_int_from_string(&token.value.int_value, ctx->lexeme_buffer);// Convert lexeme to long long
             break;
         }
         case STATE_PLUS: // Single '+' token (e.g., '+ ', not '+=')

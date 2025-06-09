@@ -173,9 +173,10 @@ ASTNode* create_ast_leaf_from_token(const Token* token) {
             node->data.identifier.name = strdup(token->lexeme);
             node->data.identifier.symbol_table_index = token->value.symbol_index; // Assuming this is set by lexer/symbol table
             break;
-        case TOKEN_INTEGER:
+        case TOKEN_INTEGER: // Changed to handle BigInt
             node = create_ast_node(AST_INTEGER_LITERAL, token->location);
-            node->data.int_value = token->value.int_value;
+            // Lexer provides integer as string in lexeme. Convert it to BigInt.
+            big_int_from_string(&node->data.integer, token->lexeme);
             break;
         case TOKEN_STRING:
             node = create_ast_node(AST_STRING_LITERAL, token->location);
@@ -221,6 +222,8 @@ ASTNode* create_ast_leaf_from_token(const Token* token) {
 void print_ast_node(const ASTNode* node, int indent) {
     if (!node) return;
 
+    char str_buffer[MAX_BIGINT_STRING_LEN + 1]; // Buffer for printing BigInts
+
     for (int i = 0; i < indent; ++i) {
         printf("  "); // 2 spaces per indent level
     }
@@ -239,7 +242,10 @@ void print_ast_node(const ASTNode* node, int indent) {
         case AST_LOOP_STATEMENT: printf("LoopStatement\n"); break;
         case AST_CODE_BLOCK: printf("CodeBlock\n"); break;
         case AST_IDENTIFIER: printf("Identifier: %s\n", node->data.identifier.name); break;
-        case AST_INTEGER_LITERAL: printf("Integer: %lld\n", node->data.int_value); break;
+        case AST_INTEGER_LITERAL:
+            big_int_to_string(&node->data.integer, str_buffer);
+            printf("Integer: %s\n", str_buffer);
+            break;
         case AST_STRING_LITERAL: printf("String: \"%s\"\n", node->data.string_value); break;
         case AST_NEWLINE: printf("Newline\n"); break;
         case AST_INT_VALUE: printf("Int_Value\n"); break; // NEW
@@ -283,6 +289,7 @@ void free_ast_node(ASTNode* node) {
                 free(node->data.keyword_lexeme);
             }
             break;
+        // No explicit free needed for BigInt, as it's stored by value
         default:
             // No specific dynamically allocated data for other types
             break;
@@ -434,7 +441,7 @@ ASTNode* semantic_action_output_list_single(ASTNode** children) {
 
 // NEW: <int_value> -> INTEGER
 ASTNode* semantic_action_int_value_from_integer(ASTNode** children) {
-    // children[0] is AST_INTEGER_LITERAL
+    // children[0] is AST_INTEGER_LITERAL. This node already contains the BigInt.
     ASTNode* int_value_node = create_ast_node(AST_INT_VALUE, children[0]->location);
     add_child_to_ast_node(int_value_node, children[0]); // Add the integer literal as a child
     return int_value_node;
@@ -1104,10 +1111,6 @@ void free_parsing_tables() {
 // --- Main Parsing Function ---
 ASTNode* parse(const Grammar* grammar, Token* tokens, int num_tokens) {
     // Parser stack: Stores state numbers and AST nodes
-    typedef struct {
-        int state;
-        ASTNode* ast_node; // AST node associated with this symbol
-    } StackEntry;
 
     StackEntry parse_stack[MAX_STATES + MAX_PRODUCTIONS]; // Max states + max symbols on RHS
     int stack_ptr = 0;

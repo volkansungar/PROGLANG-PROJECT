@@ -17,7 +17,11 @@ static void interpret_decrement(ASTNode* node);
 static void interpret_write_statement(ASTNode* node);
 static void interpret_loop_statement(ASTNode* node);
 static void interpret_code_block(ASTNode* node);
-static long long evaluate_int_value(ASTNode* node); // Function to get value from <int_value>
+// Changed return type and parameter type to BigInt for evaluation
+static void evaluate_big_int_value(ASTNode* node, BigInt* result);
+
+
+
 
 // --- Runtime Symbol Table (Environment) Implementations ---
 
@@ -27,11 +31,13 @@ void init_runtime_symbol_table(RuntimeSymbolTable* table) {
     table->capacity = 0;
 }
 
-void add_or_update_runtime_symbol(RuntimeSymbolTable* table, const char* name, long long value) {
+// Changed value to const BigInt*
+void add_or_update_runtime_symbol(RuntimeSymbolTable* table, const char* name, const BigInt* value) {
     // Check if symbol already exists, then update
     for (int i = 0; i < table->count; ++i) {
         if (strcmp(table->entries[i].name, name) == 0) {
-            table->entries[i].value = value;
+            // Update the existing BigInt value
+            big_int_copy(&table->entries[i].value, value); // Use your BigInt copy function
             return;
         }
     }
@@ -52,15 +58,17 @@ void add_or_update_runtime_symbol(RuntimeSymbolTable* table, const char* name, l
         fprintf(stderr, "Memory allocation failed for symbol name.\n");
         exit(EXIT_FAILURE);
     }
-    table->entries[table->count].value = value;
+    // Copy the BigInt value to the new entry
+    big_int_copy(&table->entries[table->count].value, value); // Use your BigInt copy function
     table->count++;
 }
 
-bool lookup_runtime_symbol(RuntimeSymbolTable* table, const char* name, long long* out_value) {
+// Changed out_value to BigInt*
+bool lookup_runtime_symbol(RuntimeSymbolTable* table, const char* name, BigInt* out_value) {
     for (int i = 0; i < table->count; ++i) {
         if (strcmp(table->entries[i].name, name) == 0) {
             if (out_value) {
-                *out_value = table->entries[i].value;
+                big_int_copy(out_value, &table->entries[i].value); // Copy the BigInt value
             }
             return true;
         }
@@ -71,6 +79,7 @@ bool lookup_runtime_symbol(RuntimeSymbolTable* table, const char* name, long lon
 void free_runtime_symbol_table(RuntimeSymbolTable* table) {
     for (int i = 0; i < table->count; ++i) {
         free(table->entries[i].name); // Free duplicated names
+        // No need to free BigInt.value as it's stored by value, not pointer.
     }
     free(table->entries); // Free the array itself
     table->entries = NULL;
@@ -97,7 +106,7 @@ void interpret_program(ASTNode* root_node) {
     // The PROGRAM node has a single child: the STATEMENT_LIST
     interpret_statement_list(root_node->children[0]);
 
-    printf("--- Program Execution Finished ---\n");
+    printf("\n--- Program Execution Finished ---\n");
 
     free_runtime_symbol_table(&global_runtime_sym_table);
 }
@@ -157,8 +166,10 @@ static void interpret_declaration(ASTNode* node) {
     }
 
     char* var_name = node->children[0]->data.identifier.name;
-    // Declare with default value 0
-    add_or_update_runtime_symbol(&global_runtime_sym_table, var_name, 0);
+    // Declare with default value 0 (as BigInt)
+    BigInt zero_val;
+    big_int_zero(&zero_val);
+    add_or_update_runtime_symbol(&global_runtime_sym_table, var_name, &zero_val);
     printf("[DEBUG] Declared variable '%s' with initial value 0.\n", var_name);
 }
 
@@ -170,11 +181,15 @@ static void interpret_assignment(ASTNode* node) {
     }
 
     char* var_name = node->children[0]->data.identifier.name;
-    long long value = evaluate_int_value(node->children[1]);
+    BigInt value_to_assign; // Result of evaluation
+    evaluate_big_int_value(node->children[1], &value_to_assign);
 
-    if (lookup_runtime_symbol(&global_runtime_sym_table, var_name, NULL)) {
-        add_or_update_runtime_symbol(&global_runtime_sym_table, var_name, value);
-        printf("[DEBUG] Assigned '%s' := %lld.\n", var_name, value);
+    BigInt dummy_lookup; // Dummy for lookup, if we only care if it exists
+    if (lookup_runtime_symbol(&global_runtime_sym_table, var_name, &dummy_lookup)) {
+        add_or_update_runtime_symbol(&global_runtime_sym_table, var_name, &value_to_assign);
+        printf("[DEBUG] Assigned '%s' := ", var_name);
+        big_int_print(&value_to_assign);
+        printf(".\n");
     } else {
         fprintf(stderr, "Runtime Error: Undeclared variable '%s' in assignment at line %d, column %d.\n",
                 var_name, node->location.line, node->location.column);
@@ -189,12 +204,20 @@ static void interpret_increment(ASTNode* node) {
     }
 
     char* var_name = node->children[0]->data.identifier.name;
-    long long increment_value = evaluate_int_value(node->children[1]);
-    long long current_value;
+    BigInt increment_val;
+    evaluate_big_int_value(node->children[1], &increment_val);
+
+    BigInt current_value;
+    BigInt new_value;
 
     if (lookup_runtime_symbol(&global_runtime_sym_table, var_name, &current_value)) {
-        add_or_update_runtime_symbol(&global_runtime_sym_table, var_name, current_value + increment_value);
-        printf("[DEBUG] Incremented '%s' by %lld. New value: %lld.\n", var_name, increment_value, current_value + increment_value);
+        big_int_add(&new_value, &current_value, &increment_val);
+        add_or_update_runtime_symbol(&global_runtime_sym_table, var_name, &new_value);
+        printf("[DEBUG] Incremented '%s' by ", var_name);
+        big_int_print(&increment_val);
+        printf(". New value: ");
+        big_int_print(&new_value);
+        printf(".\n");
     } else {
         fprintf(stderr, "Runtime Error: Undeclared variable '%s' in increment at line %d, column %d.\n",
                 var_name, node->location.line, node->location.column);
@@ -209,12 +232,20 @@ static void interpret_decrement(ASTNode* node) {
     }
 
     char* var_name = node->children[0]->data.identifier.name;
-    long long decrement_value = evaluate_int_value(node->children[1]);
-    long long current_value;
+    BigInt decrement_val;
+    evaluate_big_int_value(node->children[1], &decrement_val);
+
+    BigInt current_value;
+    BigInt new_value;
 
     if (lookup_runtime_symbol(&global_runtime_sym_table, var_name, &current_value)) {
-        add_or_update_runtime_symbol(&global_runtime_sym_table, var_name, current_value - decrement_value);
-        printf("[DEBUG] Decremented '%s' by %lld. New value: %lld.\n", var_name, decrement_value, current_value - decrement_value);
+        big_int_sub(&new_value, &current_value, &decrement_val);
+        add_or_update_runtime_symbol(&global_runtime_sym_table, var_name, &new_value);
+        printf("[DEBUG] Decremented '%s' by ", var_name);
+        big_int_print(&decrement_val);
+        printf(". New value: ");
+        big_int_print(&new_value);
+        printf(".\n");
     } else {
         fprintf(stderr, "Runtime Error: Undeclared variable '%s' in decrement at line %d, column %d.\n",
                 var_name, node->location.line, node->location.column);
@@ -230,6 +261,7 @@ static void interpret_write_statement(ASTNode* node) {
     }
 
     ASTNode* output_list_node = node->children[0];
+    char str_buffer[MAX_BIGINT_STRING_LEN + 1]; // Buffer for printing BigInts
 
     for (int i = 0; i < output_list_node->num_children; ++i) {
         ASTNode* list_element = output_list_node->children[i];
@@ -242,8 +274,10 @@ static void interpret_write_statement(ASTNode* node) {
 
         switch (element_content->type) {
             case AST_INT_VALUE: {
-                long long value = evaluate_int_value(element_content);
-                printf("%lld", value);
+                BigInt value_to_print;
+                evaluate_big_int_value(element_content, &value_to_print);
+                big_int_to_string(&value_to_print, str_buffer);
+                printf("%s", str_buffer);
                 break;
             }
             case AST_STRING_LITERAL:
@@ -270,11 +304,25 @@ static void interpret_loop_statement(ASTNode* node) {
     ASTNode* count_expr_node = node->data.loop.count_expr;
     ASTNode* body_node = node->data.loop.body;
 
-    long long count = evaluate_int_value(count_expr_node);
+    BigInt loop_count_big_int;
+    evaluate_big_int_value(count_expr_node, &loop_count_big_int);
 
-    printf("[DEBUG] Interpreting loop statement (count: %lld).\n", count);
+    long long count_ll; // Convert to long long for loop iteration
+    if (!big_int_to_long_long(&loop_count_big_int, &count_ll)) {
+        fprintf(stderr, "Runtime Error: Loop count value is too large to fit in a standard integer type at line %d, column %d. Skipping loop.\n",
+                node->location.line, node->location.column);
+        return; // Cannot execute loop with an unmanageably large count
+    }
+    if (count_ll < 0) {
+        fprintf(stderr, "Runtime Error: Loop count cannot be negative (value: %lld) at line %d, column %d. Skipping loop.\n",
+                count_ll, node->location.line, node->location.column);
+        return;
+    }
 
-    for (long long i = 0; i < count; ++i) {
+
+    printf("[DEBUG] Interpreting loop statement (count: %lld).\n", count_ll);
+
+    for (long long i = 0; i < count_ll; ++i) {
         if (body_node->type == AST_STATEMENT) {
             interpret_statement(body_node);
         } else if (body_node->type == AST_CODE_BLOCK) {
@@ -297,28 +345,27 @@ static void interpret_code_block(ASTNode* node) {
 }
 
 
-// Evaluates an <int_value> AST node to its numerical value
-static long long evaluate_int_value(ASTNode* node) {
+// Evaluates an <int_value> AST node to its BigInt value
+static void evaluate_big_int_value(ASTNode* node, BigInt* result) {
     if (!node || node->type != AST_INT_VALUE || node->num_children != 1) {
         fprintf(stderr, "Interpreter Error: Invalid AST_INT_VALUE node structure. Expected one child.\n");
-        return 0;
+        big_int_zero(result);
+        return;
     }
 
     ASTNode* child = node->children[0];
     if (child->type == AST_INTEGER_LITERAL) {
-        return child->data.int_value;
+        // The AST_INTEGER_LITERAL node now directly holds a BigInt
+        big_int_copy(result, &child->data.integer);
     } else if (child->type == AST_IDENTIFIER) {
         char* var_name = child->data.identifier.name;
-        long long value;
-        if (lookup_runtime_symbol(&global_runtime_sym_table, var_name, &value)) {
-            return value;
-        } else {
+        if (!lookup_runtime_symbol(&global_runtime_sym_table, var_name, result)) {
             fprintf(stderr, "Runtime Error: Undeclared variable '%s' used in expression at line %d, column %d.\n",
                     var_name, node->location.line, node->location.column);
-            return 0; // Return 0 for undeclared variable to avoid crash
+            big_int_zero(result); // Return 0 for undeclared variable
         }
     } else {
         fprintf(stderr, "Interpreter Error: Invalid child type for AST_INT_VALUE: %d\n", child->type);
-        return 0;
+        big_int_zero(result);
     }
 }

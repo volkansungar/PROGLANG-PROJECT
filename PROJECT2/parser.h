@@ -4,6 +4,7 @@
 #include "lexer.h" // For TokenType and Token struct
 #include <stdbool.h>
 #include <stdlib.h> // For size_t
+#include "bigint.h"
 
 // Forward declarations for AST nodes
 struct ASTNode;
@@ -18,6 +19,8 @@ typedef struct ASTNode ASTNode;
 // Maximum number of symbols (terminals + non-terminals)
 // Ensure this is large enough to cover all TokenType values plus all NonTerminalType values
 #define MAX_SYMBOLS_TOTAL (TOKEN_ERROR + 1 + NUM_NON_TERMINALS_DEFINED) // Max terminal ID + 1, plus max non-terminal ID
+
+
 
 // Enumeration for Non-Terminal IDs
 // Start from a value higher than any TokenType to avoid clashes
@@ -68,13 +71,14 @@ typedef enum {
     AST_LOOP_STATEMENT,
     AST_CODE_BLOCK,
     AST_IDENTIFIER,
-    AST_INTEGER_LITERAL,
+    AST_INTEGER_LITERAL, // This node will now hold a BigInt directly
     AST_STRING_LITERAL,
     AST_NEWLINE,
     AST_INT_VALUE, // AST node for expressions (representing integer or identifier value)
     AST_KEYWORD,   // Generic keyword/punctuation node for AST
     AST_ERROR_NODE_TYPE // Renamed from AST_ERROR to avoid potential direct name clashes
 } ASTNodeType;
+
 
 // Structure for an AST Node
 struct ASTNode {
@@ -95,7 +99,7 @@ struct ASTNode {
         } identifier;
 
         // For AST_INTEGER_LITERAL
-        long long int_value;
+        BigInt integer; // Store BigInt by value, not pointer
 
         // For AST_STRING_LITERAL
         char* string_value;
@@ -174,6 +178,11 @@ typedef struct ActionEntry {
     int target_state_or_production_id; // State for SHIFT, Production ID for REDUCE
 } ActionEntry;
 
+typedef struct {
+    int state;
+    ASTNode* ast_node; // AST node associated with this symbol
+} StackEntry;
+
 
 // --- Global Variables (Declared in parser.c, externed here) ---
 // These are now declared as global variables to be accessed across files
@@ -184,7 +193,6 @@ extern int** goto_table;           // [state][non_terminal_id]
 extern int num_states;
 extern bool nullable_status[NUM_NON_TERMINALS_DEFINED]; // Corrected array size
 extern ItemSetList canonical_collection; // Global canonical collection
-
 
 // --- Function Declarations for Parser ---
 
