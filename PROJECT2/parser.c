@@ -46,9 +46,10 @@ bool union_terminal_sets(TerminalSet* set1, TerminalSet set2) {
 // Converts a TerminalSet to a readable string (for debugging)
 void print_terminal_set(TerminalSet set, const Grammar* grammar) {
     printf("{ ");
-    for (int i = 0; i < grammar->terminal_count; ++i) { // Iterate through all potential terminal IDs
+    // Iterate up to NUM_TOKEN_TYPES (actual count of terminals)
+    for (int i = 0; i < NUM_TOKEN_TYPES; ++i) {
         // Ensure that grammar->terminals[i] is a valid symbol before accessing
-        if (i < TOKEN_ERROR + 1 && grammar->terminals[i] != NULL && is_terminal_in_set(set, grammar->terminals[i]->id)) {
+        if (i < grammar->terminal_count && grammar->terminals[i] != NULL && is_terminal_in_set(set, grammar->terminals[i]->id)) {
             printf("%s ", grammar->terminals[i]->name);
         }
     }
@@ -176,7 +177,8 @@ ASTNode* create_ast_leaf_from_token(const Token* token) {
         case TOKEN_INTEGER: // Changed to handle BigInt
             node = create_ast_node(AST_INTEGER_LITERAL, token->location);
             // Lexer provides integer as string in lexeme. Convert it to BigInt.
-            big_int_from_string(&node->data.integer, token->lexeme);
+            // The lexer's Token union uses `big_int_value`, copy it directly.
+            big_int_copy(&node->data.integer, &token->value.big_int_value);
             break;
         case TOKEN_STRING:
             node = create_ast_node(AST_STRING_LITERAL, token->location);
@@ -202,8 +204,6 @@ ASTNode* create_ast_leaf_from_token(const Token* token) {
         case TOKEN_OPENB:
         case TOKEN_CLOSEB:
         case TOKEN_EOL:
-        case TOKEN_PLUS:
-        case TOKEN_STAR:
         case TOKEN_LPAREN:
         case TOKEN_RPAREN:
         case TOKEN_EOF:
@@ -316,7 +316,7 @@ ASTNode* semantic_action_passthrough(ASTNode** children) {
 
 // R0: S' -> Program EOF
 ASTNode* semantic_action_program(ASTNode** children) {
-    printf("[DEBUG SA] semantic_action_program called. children[0]->type: %d (expected AST_STATEMENT_LIST: %d)\n", children[0]->type, AST_STATEMENT_LIST);
+    printf("[DEBUG SA] semantic_action_program called. children[0]->type: %d (expected AST_PROGRAM or AST_STATEMENT_LIST)\n", children[0]->type);
     // children[0] is Program (which itself reduces to StatementList), children[1] is EOF.
     // We create a new AST_PROGRAM node as the true root, containing the StatementList.
     ASTNode* program_node = create_ast_node(AST_PROGRAM, children[0]->location);
@@ -772,7 +772,7 @@ void closure(ItemSet* I, const Grammar* grammar) {
                         const Production* B_prod = &grammar->productions[prod_idx]; // Use const Production*
                         if (B_prod->left_symbol->id == B->id) { // This production starts with B
                             // Iterate through all possible terminal IDs
-                            for (TokenType b_id = 0; b_id < grammar->terminal_count; ++b_id) {
+                            for (TokenType b_id = 0; b_id < NUM_TOKEN_TYPES; ++b_id) { // Iterate up to NUM_TOKEN_TYPES
                                 // Only add if terminal exists and is in the computed set
                                 // Also ensure b_id is within the 64-bit limit for TerminalSet
                                 if (b_id < 64 && grammar->terminals[b_id] != NULL && is_terminal_in_set(first_beta_alpha, b_id)) {
@@ -861,7 +861,7 @@ void create_lr1_sets(const Grammar* grammar) {
                 if (next_symbol->type == SYMBOL_TERMINAL) {
                     symbol_idx = next_symbol->id;
                 } else { // SYMBOL_NONTERMINAL
-                    symbol_idx = next_symbol->id + (TOKEN_ERROR + 1); // Offset for non-terminals
+                    symbol_idx = next_symbol->id + NUM_TOKEN_TYPES; // Offset for non-terminals
                 }
 
                 if (symbol_idx >= MAX_SYMBOLS_TOTAL) {
@@ -883,11 +883,9 @@ void create_lr1_sets(const Grammar* grammar) {
 
         for (int j = 0; j < reachable_symbols_count; ++j) {
             const GrammarSymbol* X = reachable_symbols[j];
-            // Fix: Use &current_I instead of undeclared I
             ItemSet J = go_to(&current_I, X, grammar);
 
             if (J.count > 0) { // If GOTO(I, X) is not empty
-                // Fix: Use &canonical_collection instead of undeclared canonical_collection_ptr
                 int existing_J_idx = find_item_set(&canonical_collection, &J);
                 if (existing_J_idx == -1) {
                     // Add new item set to collection
@@ -912,14 +910,14 @@ void build_parsing_tables(const Grammar* grammar, const ItemSetList* canonical_c
         exit(EXIT_FAILURE);
     }
     for (int i = 0; i < num_states; ++i) {
-        // Allocate based on true_terminal_count from grammar for precise indexing
-        action_table[i] = (ActionEntry*)malloc(grammar->terminal_count * sizeof(ActionEntry));
+        // Allocate based on NUM_TOKEN_TYPES for precise indexing
+        action_table[i] = (ActionEntry*)malloc(NUM_TOKEN_TYPES * sizeof(ActionEntry));
         if (!action_table[i]) {
             fprintf(stderr, "Memory allocation failed for action_table row %d.\n", i);
             exit(EXIT_FAILURE);
         }
         // Initialize all actions to ERROR
-        for (int j = 0; j < grammar->terminal_count; ++j) {
+        for (int j = 0; j < NUM_TOKEN_TYPES; ++j) {
             action_table[i][j].type = ACTION_ERROR;
             action_table[i][j].target_state_or_production_id = -1;
         }
@@ -952,7 +950,7 @@ void build_parsing_tables(const Grammar* grammar, const ItemSetList* canonical_c
         GrammarSymbol* shift_symbols[MAX_SYMBOLS_TOTAL] = {NULL}; // Store unique symbols that can be shifted
         int shift_symbols_count = 0;
         // This boolean array tracks if a terminal ID has already been added to shift_symbols for the current state
-        bool symbol_added_for_shift[TOKEN_ERROR + 1] = {false};
+        bool symbol_added_for_shift[NUM_TOKEN_TYPES] = {false}; // Use NUM_TOKEN_TYPES
 
         for (int j = 0; j < I->count; ++j) {
             Item current_item = I->items[j];
@@ -963,7 +961,7 @@ void build_parsing_tables(const Grammar* grammar, const ItemSetList* canonical_c
 
                 if (next_symbol->type == SYMBOL_TERMINAL) {
                     // Only add if not already added for this state
-                    if (next_symbol->id < (TOKEN_ERROR + 1) && !symbol_added_for_shift[next_symbol->id]) {
+                    if (next_symbol->id < NUM_TOKEN_TYPES && !symbol_added_for_shift[next_symbol->id]) {
                         if (shift_symbols_count >= MAX_SYMBOLS_TOTAL) {
                             fprintf(stderr, "Error: shift_symbols_count exceeded MAX_SYMBOLS_TOTAL.\n");
                             exit(EXIT_FAILURE);
@@ -982,7 +980,7 @@ void build_parsing_tables(const Grammar* grammar, const ItemSetList* canonical_c
             int target_state = find_item_set(canonical_collection_ptr, &J); // Find its ID in the collection
 
             if (target_state != -1) {
-                if (X->id >= grammar->terminal_count) {
+                if (X->id >= NUM_TOKEN_TYPES) { // Use NUM_TOKEN_TYPES
                     fprintf(stderr, "Error: Terminal ID %d out of bounds for action_table access in state %d.\n", X->id, i);
                     exit(EXIT_FAILURE);
                 }
@@ -1012,7 +1010,7 @@ void build_parsing_tables(const Grammar* grammar, const ItemSetList* canonical_c
             if (current_item.dot_pos == p->right_count) { // Reduction item (dot at the end)
                 // If S' -> Program . EOF, it should be a REDUCE for Production 0, followed by ACCEPT
                 if (p->left_symbol->id == grammar->start_symbol->id && current_item.lookahead == TOKEN_EOF) {
-                    if (TOKEN_EOF >= grammar->terminal_count) {
+                    if (TOKEN_EOF >= NUM_TOKEN_TYPES) { // Use NUM_TOKEN_TYPES
                         fprintf(stderr, "Error: TOKEN_EOF (%d) out of bounds for action_table access in state %d.\n", TOKEN_EOF, i);
                         exit(EXIT_FAILURE);
                     }
@@ -1028,7 +1026,7 @@ void build_parsing_tables(const Grammar* grammar, const ItemSetList* canonical_c
                     action_table[i][TOKEN_EOF].target_state_or_production_id = p->production_id; // Set target to production 0
                 } else {
                     // REDUCE action for current_item.lookahead
-                    if (current_item.lookahead >= grammar->terminal_count) {
+                    if (current_item.lookahead >= NUM_TOKEN_TYPES) { // Use NUM_TOKEN_TYPES
                         fprintf(stderr, "Error: Lookahead terminal ID %d out of bounds for action_table access in state %d.\n", current_item.lookahead, i);
                         exit(EXIT_FAILURE);
                     }
@@ -1074,12 +1072,39 @@ void build_parsing_tables(const Grammar* grammar, const ItemSetList* canonical_c
 
     // Debugging: Print action table entry for State 0 and TOKEN_IDENTIFIER
     printf("\n--- Debugging Action Table State 0, Token IDENTIFIER ---\n");
-    if (0 < num_states && TOKEN_IDENTIFIER < grammar->terminal_count) {
+    if (0 < num_states && TOKEN_IDENTIFIER < NUM_TOKEN_TYPES) {
         ActionEntry dbg_action = action_table[0][TOKEN_IDENTIFIER];
         printf("Action[0][IDENTIFIER]: Type = %d (SHIFT=%d, REDUCE=%d, ACCEPT=%d, ERROR=%d), Target = %d\n",
                dbg_action.type, ACTION_SHIFT, ACTION_REDUCE, ACTION_ACCEPT, ACTION_ERROR, dbg_action.target_state_or_production_id);
     } else {
         printf("State 0 or TOKEN_IDENTIFIER out of bounds for action table lookup.\n");
+    }
+    printf("----------------------------------------------------------\n");
+
+    printf("\n--- Specific Debugging for State 24, Token EndOfLine (;) ---\n");
+    int debug_state = 24;
+    TokenType debug_token_type = TOKEN_EOL;
+
+    if (debug_state < num_states && debug_token_type < NUM_TOKEN_TYPES) {
+        printf("Contents of I%d:\n", debug_state);
+        const ItemSet* debug_I = &canonical_collection_ptr->sets[debug_state];
+        for (int k = 0; k < debug_I->count; ++k) {
+            const Item* item = &debug_I->items[k];
+            const Production* p = &grammar->productions[item->production_idx];
+            printf("  %s -> ", p->left_symbol->name);
+            for (int m = 0; m < p->right_count; ++m) {
+                if (m == item->dot_pos) printf(".");
+                printf("%s ", p->right_symbols[m]->name);
+            }
+            if (item->dot_pos == p->right_count) printf(".");
+            printf(", %s (Prod ID: %d)\n", token_type_str(item->lookahead), item->production_idx);
+        }
+
+        ActionEntry debug_action = action_table[debug_state][debug_token_type];
+        printf("Action[%d][%s]: Type = %d (SHIFT=%d, REDUCE=%d, ACCEPT=%d, ERROR=%d), Target = %d\n",
+               debug_state, token_type_str(debug_token_type), debug_action.type, ACTION_SHIFT, ACTION_REDUCE, ACTION_ACCEPT, ACTION_ERROR, debug_action.target_state_or_production_id);
+    } else {
+        printf("Debug state %d or token %s (%d) out of bounds.\n", debug_state, token_type_str(debug_token_type), debug_token_type);
     }
     printf("----------------------------------------------------------\n");
 }
@@ -1130,7 +1155,7 @@ ASTNode* parse(const Grammar* grammar, Token* tokens, int num_tokens) {
         TokenType current_token_type = current_token.type;
 
         // Basic check for out-of-bounds token type for action table lookup
-        if (current_token_type < 0 || current_token_type >= grammar->terminal_count) {
+        if (current_token_type < 0 || current_token_type >= NUM_TOKEN_TYPES) { // Use NUM_TOKEN_TYPES
              fprintf(stderr, "Parser Error: Invalid token type (%s, ID: %d) encountered at input line %d, column %d. This token is not a recognized terminal for parsing table lookup.\n",
                      token_type_str(current_token_type), current_token_type, current_token.location.line, current_token.location.column);
              return NULL;
@@ -1165,7 +1190,12 @@ ASTNode* parse(const Grammar* grammar, Token* tokens, int num_tokens) {
                     current_token.type = TOKEN_EOF;
                     strncpy(current_token.lexeme, "EOF", MAX_LEXEME_LENGTH);
                     current_token.lexeme[MAX_LEXEME_LENGTH-1] = '\0';
-                    current_token.location = (SourceLocation){ .line = current_token.location.line, .column = current_token.location.column + 1, .filename = current_token.location.filename };
+                    // Adjust location to be at the end of the last token, or just indicate EOF
+                    if (num_tokens > 0) {
+                        current_token.location = (SourceLocation){ .line = tokens[num_tokens-1].location.line, .column = tokens[num_tokens-1].location.column + strlen(tokens[num_tokens-1].lexeme), .filename = tokens[num_tokens-1].location.filename };
+                    } else {
+                        current_token.location = (SourceLocation){ .line = 1, .column = 0, .filename = grammar->terminals[TOKEN_EOF]->name }; // Or a dummy filename
+                    }
                 }
                 break;
             }
@@ -1212,7 +1242,9 @@ ASTNode* parse(const Grammar* grammar, Token* tokens, int num_tokens) {
                 }
 
                 if (children_ast_nodes) {
-                    free(children_ast_nodes); // Free the temporary array of child pointers
+                    // Free the temporary array of child pointers.
+                    // The AST nodes themselves are owned by the new lhs_ast_node or will be freed during general cleanup.
+                    free(children_ast_nodes);
                 }
 
                 // --- NEW: Check for ACCEPTANCE after reduction of the augmented start symbol ---

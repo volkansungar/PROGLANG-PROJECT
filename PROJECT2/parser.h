@@ -13,12 +13,12 @@ typedef struct ASTNode ASTNode;
 // Maximum number of grammar productions (adjust as needed for your grammar)
 #define MAX_PRODUCTIONS 50
 // Maximum number of non-terminals (adjust based on your grammar)
-#define MAX_NON_TERMINALS 30
+#define MAX_NON_TERMINALS 30 // This is just a conceptual max, actual count from enum
 // Maximum number of LR(1) states/item sets
 #define MAX_STATES 500 // Can grow quite large for complex grammars
 // Maximum number of symbols (terminals + non-terminals)
 // Ensure this is large enough to cover all TokenType values plus all NonTerminalType values
-#define MAX_SYMBOLS_TOTAL (TOKEN_ERROR + 1 + NUM_NON_TERMINALS_DEFINED) // Max terminal ID + 1, plus max non-terminal ID
+#define MAX_SYMBOLS_TOTAL (NUM_TOKEN_TYPES + NUM_NON_TERMINALS_DEFINED) // Max terminal ID + 1, plus max non-terminal ID
 
 
 

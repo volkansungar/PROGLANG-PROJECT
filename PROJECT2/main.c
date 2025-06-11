@@ -171,35 +171,34 @@ int main(int argc, char *argv[]) {
 
     // Terminals (IDs should match TokenType from lexer.h for consistency)
     // Dynamically allocate this array so its memory can be freed via the Grammar struct
-    GrammarSymbol** all_terminals_map = (GrammarSymbol**)calloc(TOKEN_ERROR + 1, sizeof(GrammarSymbol*));
+    GrammarSymbol** all_terminals_map = (GrammarSymbol**)calloc(NUM_TOKEN_TYPES, sizeof(GrammarSymbol*)); // Use NUM_TOKEN_TYPES
     if (!all_terminals_map) {
         fprintf(stderr, "Memory allocation failed for all_terminals_map.\n");
         exit(EXIT_FAILURE);
     }
 
     // Assign terminal symbols to their respective indices in the map
-    all_terminals_map[TOKEN_EOL] = create_terminal(TOKEN_EOL, ";");
-    all_terminals_map[TOKEN_INTEGER] = create_terminal(TOKEN_INTEGER, "INTEGER");
-    all_terminals_map[TOKEN_WRITE] = create_terminal(TOKEN_WRITE, "WRITE");
-	all_terminals_map[TOKEN_NUMBER] = create_terminal(TOKEN_NUMBER, "NUMBER");
-    all_terminals_map[TOKEN_REPEAT] = create_terminal(TOKEN_REPEAT, "REPEAT");
-    all_terminals_map[TOKEN_AND] = create_terminal(TOKEN_AND, "AND");
-    all_terminals_map[TOKEN_TIMES] = create_terminal(TOKEN_TIMES, "TIMES");
-    all_terminals_map[TOKEN_NEWLINE] = create_terminal(TOKEN_NEWLINE, "NEWLINE");
+    all_terminals_map[TOKEN_EOF] = create_terminal(TOKEN_EOF, "$");
     all_terminals_map[TOKEN_IDENTIFIER] = create_terminal(TOKEN_IDENTIFIER, "IDENTIFIER");
-    all_terminals_map[TOKEN_STRING] = create_terminal(TOKEN_STRING, "STRING");
+    all_terminals_map[TOKEN_WRITE] = create_terminal(TOKEN_WRITE, "WRITE");
+    all_terminals_map[TOKEN_AND] = create_terminal(TOKEN_AND, "AND");
+    all_terminals_map[TOKEN_REPEAT] = create_terminal(TOKEN_REPEAT, "REPEAT");
+    all_terminals_map[TOKEN_NEWLINE] = create_terminal(TOKEN_NEWLINE, "NEWLINE");
+    all_terminals_map[TOKEN_TIMES] = create_terminal(TOKEN_TIMES, "TIMES");
+    all_terminals_map[TOKEN_NUMBER] = create_terminal(TOKEN_NUMBER, "NUMBER");
+    all_terminals_map[TOKEN_INTEGER] = create_terminal(TOKEN_INTEGER, "INTEGER");
     all_terminals_map[TOKEN_ASSIGN] = create_terminal(TOKEN_ASSIGN, ":=");
     all_terminals_map[TOKEN_PLUS_ASSIGN] = create_terminal(TOKEN_PLUS_ASSIGN, "+=");
     all_terminals_map[TOKEN_MINUS_ASSIGN] = create_terminal(TOKEN_MINUS_ASSIGN, "-=");
     all_terminals_map[TOKEN_OPENB] = create_terminal(TOKEN_OPENB, "{");
     all_terminals_map[TOKEN_CLOSEB] = create_terminal(TOKEN_CLOSEB, "}");
-    all_terminals_map[TOKEN_PLUS] = create_terminal(TOKEN_PLUS, "+");
-    all_terminals_map[TOKEN_STAR] = create_terminal(TOKEN_STAR, "*");
+    all_terminals_map[TOKEN_STRING] = create_terminal(TOKEN_STRING, "STRING");
+    all_terminals_map[TOKEN_EOL] = create_terminal(TOKEN_EOL, ";");
     all_terminals_map[TOKEN_LPAREN] = create_terminal(TOKEN_LPAREN, "(");
     all_terminals_map[TOKEN_RPAREN] = create_terminal(TOKEN_RPAREN, ")");
-    all_terminals_map[TOKEN_EOF] = create_terminal(TOKEN_EOF, "$");
+    all_terminals_map[TOKEN_ERROR] = create_terminal(TOKEN_ERROR, "ERROR"); // Although ERROR token, useful for mapping
 
-    int true_terminal_count = TOKEN_ERROR + 1; // Assuming TOKEN_ERROR is the max TokenType ID used
+    int true_terminal_count = NUM_TOKEN_TYPES; // Use NUM_TOKEN_TYPES for consistency
 
     // Production rules - this array will be copied, and its pointer assigned to grammar.productions
     Production productions_array[MAX_PRODUCTIONS];
@@ -268,11 +267,11 @@ productions_array[prod_idx] = create_production(increment_nt, inc_rhs, 3, prod_i
 GrammarSymbol* write_stmt_rhs[] = {all_terminals_map[TOKEN_WRITE], output_list_nt};
 productions_array[prod_idx] = create_production(write_stmt_nt, write_stmt_rhs, 2, prod_idx, semantic_action_write_statement); prod_idx++;
 
-// R14: <loop_statement> -> repeat <int_value> times <statement> // Changed to int_value
+// R14: <loop_statement> -> repeat <int_value> times <statement>
 GrammarSymbol* loop_stmt_single_rhs[] = {all_terminals_map[TOKEN_REPEAT], int_value_nt, all_terminals_map[TOKEN_TIMES], statement_nt};
 productions_array[prod_idx] = create_production(loop_stmt_nt, loop_stmt_single_rhs, 4, prod_idx, semantic_action_loop_statement_single); prod_idx++;
 
-// R15: <loop_statement> -> repeat <int_value> times <code_block> // Changed to int_value
+// R15: <loop_statement> -> repeat <int_value> times <code_block>
 GrammarSymbol* loop_stmt_block_rhs[] = {all_terminals_map[TOKEN_REPEAT], int_value_nt, all_terminals_map[TOKEN_TIMES], code_block_nt};
 productions_array[prod_idx] = create_production(loop_stmt_nt, loop_stmt_block_rhs, 4, prod_idx, semantic_action_loop_statement_block); prod_idx++;
 
@@ -298,7 +297,7 @@ GrammarSymbol* int_value_id_rhs[] = {all_terminals_map[TOKEN_IDENTIFIER]};
 productions_array[prod_idx] = create_production(int_value_nt, int_value_id_rhs, 1, prod_idx, semantic_action_int_value_from_identifier); prod_idx++;
 
 
-// R19: <list_element> -> <int_value> // Changed to int_value
+// R19: <list_element> -> <int_value>
 GrammarSymbol* list_elem_int_value_rhs[] = {int_value_nt};
 productions_array[prod_idx] = create_production(list_element_nt, list_elem_int_value_rhs, 1, prod_idx, semantic_action_list_element); prod_idx++;
 
@@ -315,7 +314,7 @@ productions_array[prod_idx] = create_production(list_element_nt, list_elem_newli
         .productions = productions_array, // Assign the pointer to the local array
         .production_count = prod_idx, // Use the actual count of added productions
         .terminals = all_terminals_map, // Assign the pointer to the dynamically allocated array
-        .terminal_count = true_terminal_count, // Set the count to TOKEN_ERROR + 1
+        .terminal_count = true_terminal_count, // Set the count to NUM_TOKEN_TYPES
         .non_terminals = all_non_terminals_map, // Assign the pointer to the dynamically allocated array
         .non_terminal_count = true_non_terminal_count, // Set the count to NUM_NON_TERMINALS_DEFINED
         .start_symbol = s_prime // S' is the augmented start symbol

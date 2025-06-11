@@ -166,6 +166,15 @@ static void interpret_declaration(ASTNode* node) {
     }
 
     char* var_name = node->children[0]->data.identifier.name;
+    BigInt dummy_lookup; // Dummy for lookup, we only care if it exists
+
+    // Check if the variable is already declared
+    if (lookup_runtime_symbol(&global_runtime_sym_table, var_name, &dummy_lookup)) {
+        fprintf(stderr, "Runtime Error: Variable '%s' already declared at line %d, column %d.\n",
+                var_name, node->location.line, node->location.column);
+        return; // Stop processing this declaration
+    }
+
     // Declare with default value 0 (as BigInt)
     BigInt zero_val;
     big_int_zero(&zero_val);
@@ -304,88 +313,52 @@ static void interpret_loop_statement(ASTNode* node) {
     ASTNode* count_expr_node = node->data.loop.count_expr;
     ASTNode* body_node = node->data.loop.body;
 
-    // Check if the count expression is a variable (identifier)
-    bool is_variable_count = false;
-    char* count_var_name = NULL;
+    // Evaluate the initial loop count. This will be the *effective* number of times the loop runs.
+    BigInt loop_count;
+    evaluate_big_int_value(count_expr_node, &loop_count);
 
-    if (count_expr_node->type == AST_INT_VALUE &&
-        count_expr_node->num_children == 1 &&
-        count_expr_node->children[0]->type == AST_IDENTIFIER) {
-        is_variable_count = true;
-        count_var_name = count_expr_node->children[0]->data.identifier.name;
-    }
-
-    BigInt loop_count_big_int;
-    evaluate_big_int_value(count_expr_node, &loop_count_big_int);
+    BigInt zero;
+    big_int_zero(&zero);
 
     // Check for negative loop count
-    if (loop_count_big_int.sign == -1) {
+    if (loop_count.sign == -1) {
         fprintf(stderr, "Runtime Error: Loop count cannot be negative at line %d, column %d. Skipping loop.\n",
                 node->location.line, node->location.column);
         return;
     }
 
-    BigInt zero;
-    big_int_zero(&zero);
-
-    // If loop count is zero, skip the loop entirely
-    if (big_int_abs_compare(&loop_count_big_int, &zero) == 0) {
+    // If initial count is zero, skip the loop entirely
+    if (big_int_abs_compare(&loop_count, &zero) == 0) {
         printf("[DEBUG] Interpreting loop statement (count: 0, skipping loop).\n");
         return;
     }
 
+    printf("[DEBUG] Interpreting loop statement (BigInt count: ");
+    big_int_print(&loop_count);
+    printf(").\n");
+
+    BigInt current_iteration;
+    big_int_zero(&current_iteration);
     BigInt one;
     big_int_from_long_long(&one, 1);
 
-    printf("[DEBUG] Interpreting loop statement (BigInt count: ");
-    big_int_print(&loop_count_big_int);
-    printf(").\n");
-
-    if (is_variable_count) {
-        // For variable-based loops: decrement the variable after each iteration
-        BigInt current_var_value;
-
-        while (lookup_runtime_symbol(&global_runtime_sym_table, count_var_name, &current_var_value) &&
-               big_int_abs_compare(&current_var_value, &zero) > 0) {
-
-            // Execute loop body
-            if (body_node->type == AST_STATEMENT) {
-                interpret_statement(body_node);
-            } else if (body_node->type == AST_CODE_BLOCK) {
-                interpret_code_block(body_node);
-            } else {
-                fprintf(stderr, "Interpreter Error: Invalid loop body type: %d\n", body_node->type);
-                break; // Exit loop on invalid body to prevent infinite errors
-            }
-
-            // Decrement the variable by 1
-            BigInt new_value;
-            big_int_sub(&new_value, &current_var_value, &one);
-            add_or_update_runtime_symbol(&global_runtime_sym_table, count_var_name, &new_value);
-
-            printf("[DEBUG] Decremented loop variable '%s' to ", count_var_name);
-            big_int_print(&new_value);
-            printf(".\n");
+    // Loop as long as current_iteration < loop_count
+    while (big_int_abs_compare(&current_iteration, &loop_count) < 0) {
+        if (body_node->type == AST_CODE_BLOCK) {
+            interpret_code_block(body_node);
+        } else {
+            interpret_statement(body_node);
         }
-    } else {
-        // For literal values: use traditional counter-based loop
-        BigInt current_iteration;
-        big_int_zero(&current_iteration);
-
-        // Loop as long as current_iteration < loop_count_big_int
-        while (big_int_abs_compare(&current_iteration, &loop_count_big_int) < 0) {
-            if (body_node->type == AST_STATEMENT) {
-                interpret_statement(body_node);
-            } else if (body_node->type == AST_CODE_BLOCK) {
-                interpret_code_block(body_node);
-            } else {
-                fprintf(stderr, "Interpreter Error: Invalid loop body type: %d\n", body_node->type);
-                break; // Exit loop on invalid body to prevent infinite errors
-            }
-            big_int_add(&current_iteration, &current_iteration, &one); // Increment counter
-        }
+        big_int_add(&current_iteration, &current_iteration, &one); // Increment internal counter for loop iterations
+        printf("[DEBUG] Loop iteration count: "); // Debug for loop
+        big_int_print(&current_iteration);
+        printf(".\n");
     }
+    printf("[DEBUG] Loop finished. Iterations completed: ");
+    big_int_print(&current_iteration);
+    printf(".\n");
 }
+
 static void interpret_code_block(ASTNode* node) {
     if (!node || node->type != AST_CODE_BLOCK || node->num_children != 1 || node->children[0]->type != AST_STATEMENT_LIST) {
         fprintf(stderr, "Interpreter Error: Invalid AST_CODE_BLOCK node structure.\n");
@@ -393,7 +366,7 @@ static void interpret_code_block(ASTNode* node) {
     }
     printf("[DEBUG] Entering code block.\n");
     interpret_statement_list(node->children[0]);
-    printf("[DEBUG] Exiting code block.\n");
+    printf("[DEBUG] Exiting code block.\n\n"); // Added newline for clarity
 }
 
 
