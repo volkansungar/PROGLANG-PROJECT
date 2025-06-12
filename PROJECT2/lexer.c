@@ -76,9 +76,10 @@ void setup_transition_table(LexContext* ctx) {
         ctx->transition_table[i][CHAR_EOF] = STATE_EOF_CHAR;
     }
 
-    // IDENTIFIER STATE TRANSITIONS: continues as long as it sees alpha or digit
+    // IDENTIFIER STATE TRANSITIONS: continues as long as it sees alpha, digit or underscore
     ctx->transition_table[STATE_IDENTIFIER][CHAR_ALPHA] = STATE_IDENTIFIER;
     ctx->transition_table[STATE_IDENTIFIER][CHAR_DIGIT] = STATE_IDENTIFIER;
+    ctx->transition_table[STATE_IDENTIFIER][CHAR_UNDERSCORE] = STATE_IDENTIFIER;
 
     // INTEGER STATE TRANSITIONS: continues as long as it sees digit
     ctx->transition_table[STATE_INTEGER][CHAR_DIGIT] = STATE_INTEGER;
@@ -133,7 +134,8 @@ void add_keyword(LexContext* ctx, const char* keyword, TokenType type) {
 // Determines the character class for a given character
 CharClass get_char_class(int c) {
     if (c == EOF) return CHAR_EOF;
-    if (isalpha(c) || c == '_') return CHAR_ALPHA;
+    if (isalpha(c)) return CHAR_ALPHA;
+    if (c == '_') return CHAR_UNDERSCORE;
     if (isdigit(c)) return CHAR_DIGIT;
     if (c == '"') return CHAR_QUOTE;
     if (c == '*') return CHAR_STAR;
@@ -274,9 +276,9 @@ Token get_next_token(LexContext* ctx) {
                     report_error(ctx, "Invalid operator: expected '=' after '+'.");
                 } else if (prev_state == STATE_DASH && char_class != CHAR_EQUALS && char_class != CHAR_DIGIT) {
                     report_error(ctx, "Invalid operator: expected '=' or digit after '-'.");
-                } else if (char_class == CHAR_OTHER) {
+                } else if (char_class == CHAR_OTHER || char_class == CHAR_UNDERSCORE) { // underscore can't start an identifier
                     // For unrecognized characters
-                    report_error(ctx, "Unknown character encountered.");
+                    report_error(ctx, "Unknown character or invalid start of identifier.");
                 }
                 // Break from loop to signify an error token
                 break;
@@ -490,4 +492,3 @@ Token* lexer(FILE* inputFile, char* input_filename, int* num_tokens_out) {
 
     return tokens; // Return the array of tokens
 }
-

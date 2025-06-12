@@ -583,7 +583,7 @@ void compute_first_sets(const Grammar* grammar) {
 
     // Debugging print: Print computed FIRST sets
     printf("\n--- Computed FIRST Sets ---\n");
-    for (int i = 0; i < grammar->non_terminal_count; ++i) {
+    /*for (int i = 0; i < grammar->non_terminal_count; ++i) {
         if (grammar->non_terminals[i] != NULL) {
             printf("FIRST(%s): ", grammar->non_terminals[i]->name);
             if (grammar->non_terminals[i]->id < NUM_NON_TERMINALS_DEFINED) { // Ensure bounds
@@ -593,7 +593,7 @@ void compute_first_sets(const Grammar* grammar) {
             }
             printf("\n");
         }
-    }
+    }*/
     printf("---------------------------\n");
 }
 
@@ -694,7 +694,7 @@ void compute_follow_sets(const Grammar* grammar) {
 
     // Debugging print: Print computed FOLLOW sets
     printf("\n--- Computed FOLLOW Sets ---\n");
-    for (int i = 0; i < grammar->non_terminal_count; ++i) {
+    /*for (int i = 0; i < grammar->non_terminal_count; ++i) {
         if (grammar->non_terminals[i] != NULL) {
             printf("FOLLOW(%s): ", grammar->non_terminals[i]->name);
             if (grammar->non_terminals[i]->id < NUM_NON_TERMINALS_DEFINED) { // Ensure bounds
@@ -704,7 +704,7 @@ void compute_follow_sets(const Grammar* grammar) {
             }
             printf("\n");
         }
-    }
+    }*/
     printf("----------------------------\n");
 }
 
@@ -825,7 +825,7 @@ void create_lr1_sets(const Grammar* grammar) {
     add_item_set(&canonical_collection, &I0); // Add I0 to the collection
 
     // Debugging: Print I0 contents
-    printf("\n--- I0 (State 0) Contents ---\n");
+    /*printf("\n--- I0 (State 0) Contents ---\n");
     for (int k = 0; k < canonical_collection.sets[0].count; ++k) {
         const Item* item = &canonical_collection.sets[0].items[k];
         const Production* p = &grammar->productions[item->production_idx];
@@ -836,7 +836,7 @@ void create_lr1_sets(const Grammar* grammar) {
         }
         if (item->dot_pos == p->right_count) printf(".");
         printf(", %s\n", token_type_str(item->lookahead));
-    }
+    }*/
     printf("------------------------------\n");
 
 
@@ -1072,7 +1072,7 @@ void build_parsing_tables(const Grammar* grammar, const ItemSetList* canonical_c
 
     // Debugging: Print action table entry for State 0 and TOKEN_IDENTIFIER
     printf("\n--- Debugging Action Table State 0, Token IDENTIFIER ---\n");
-    if (0 < num_states && TOKEN_IDENTIFIER < NUM_TOKEN_TYPES) {
+    /*if (0 < num_states && TOKEN_IDENTIFIER < NUM_TOKEN_TYPES) {
         ActionEntry dbg_action = action_table[0][TOKEN_IDENTIFIER];
         printf("Action[0][IDENTIFIER]: Type = %d (SHIFT=%d, REDUCE=%d, ACCEPT=%d, ERROR=%d), Target = %d\n",
                dbg_action.type, ACTION_SHIFT, ACTION_REDUCE, ACTION_ACCEPT, ACTION_ERROR, dbg_action.target_state_or_production_id);
@@ -1105,7 +1105,7 @@ void build_parsing_tables(const Grammar* grammar, const ItemSetList* canonical_c
                debug_state, token_type_str(debug_token_type), debug_action.type, ACTION_SHIFT, ACTION_REDUCE, ACTION_ACCEPT, ACTION_ERROR, debug_action.target_state_or_production_id);
     } else {
         printf("Debug state %d or token %s (%d) out of bounds.\n", debug_state, token_type_str(debug_token_type), debug_token_type);
-    }
+    }*/
     printf("----------------------------------------------------------\n");
 }
 
@@ -1163,14 +1163,14 @@ ASTNode* parse(const Grammar* grammar, Token* tokens, int num_tokens) {
 
         ActionEntry action = action_table[current_state][current_token_type];
 
-        printf("State: %d, Current Token: %s ('%s', Line:%d Col:%d) | Action: ",
+        /*printf("State: %d, Current Token: %s ('%s', Line:%d Col:%d) | Action: ",
                current_state, token_type_str(current_token_type), current_token.lexeme,
-               current_token.location.line, current_token.location.column);
+               current_token.location.line, current_token.location.column);*/
 
         switch (action.type) {
             case ACTION_SHIFT: {
                 int next_state = action.target_state_or_production_id;
-                printf("SHIFT %d\n", next_state);
+                //printf("SHIFT %d\n", next_state);
 
                 // Create a leaf AST node for the shifted terminal if it's relevant.
                 ASTNode* shifted_node = create_ast_leaf_from_token(&current_token);
@@ -1202,11 +1202,11 @@ ASTNode* parse(const Grammar* grammar, Token* tokens, int num_tokens) {
             case ACTION_REDUCE: {
                 int prod_id = action.target_state_or_production_id;
                 const Production* p = &grammar->productions[prod_id]; // Use const Production*
-                printf("REDUCE by %s -> ", p->left_symbol->name);
+                //printf("REDUCE by %s -> ", p->left_symbol->name);
                 for (int k = 0; k < p->right_count; ++k) {
-                    printf("%s ", p->right_symbols[k]->name);
+                    //printf("%s ", p->right_symbols[k]->name);
                 }
-                printf(" (Production %d)\n", prod_id);
+                //printf(" (Production %d)\n", prod_id);
 
                 // Pop RHS symbols from stack and collect their AST nodes for semantic action
                 ASTNode** children_ast_nodes = NULL;
@@ -1226,7 +1226,7 @@ ASTNode* parse(const Grammar* grammar, Token* tokens, int num_tokens) {
 
                 // Call semantic action to get AST node for LHS
                 ASTNode* lhs_ast_node = NULL;
-                printf("  Calling semantic action for production %d (%s -> ...)\n", prod_id, p->left_symbol->name);
+                //printf("  Calling semantic action for production %d (%s -> ...)\n", prod_id, p->left_symbol->name);
                 if (p->semantic_action) {
                     lhs_ast_node = p->semantic_action(children_ast_nodes);
                 } else {
@@ -1236,9 +1236,9 @@ ASTNode* parse(const Grammar* grammar, Token* tokens, int num_tokens) {
                     }
                 }
                 if (lhs_ast_node) {
-                    printf("  Semantic action returned ASTNode of type %d.\n", lhs_ast_node->type);
+                    //printf("  Semantic action returned ASTNode of type %d.\n", lhs_ast_node->type);
                 } else {
-                    printf("  Semantic action returned NULL.\n");
+                    //printf("  Semantic action returned NULL.\n");
                 }
 
                 if (children_ast_nodes) {
@@ -1247,9 +1247,9 @@ ASTNode* parse(const Grammar* grammar, Token* tokens, int num_tokens) {
                     free(children_ast_nodes);
                 }
 
-                // --- NEW: Check for ACCEPTANCE after reduction of the augmented start symbol ---
+                // --- Check for ACCEPTANCE after reduction of the augmented start symbol ---
                 if (prod_id == 0) { // If production 0 (S' -> Program EOF) was just reduced
-                    printf("ACCEPT (via S' reduction)\n");
+                    //printf("ACCEPT (via S' reduction)\n");
                     // The lhs_ast_node for production 0 should be the final AST_PROGRAM node
                     // It's already pushed onto the stack correctly in the next steps.
                     // Instead of pushing and then immediately returning, we just return it.

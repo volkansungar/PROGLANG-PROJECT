@@ -83,8 +83,9 @@ typedef enum State {
 
 // Character types for FSM transitions
 typedef enum CharClass {
-    CHAR_ALPHA = 0,   // a-z, A-Z, _
+    CHAR_ALPHA = 0,   // a-z, A-Z
     CHAR_DIGIT,       // 0-9
+    CHAR_UNDERSCORE,  // _
     CHAR_COLON,       // :
     CHAR_PLUS,        // +
     CHAR_DASH,        // -
